@@ -1445,9 +1445,37 @@ internal class HarborMirrorController(
         else refreshWorkspaces { reconcile() }
     }
 
-    fun activateWorkspace(workspaceId: String) = mutateAndRefresh {
-        client.postActivate(requireCredentials(), workspaceId)
-        noteActivated(workspaceId)
+    /**
+     * The workspace the user picked by touch. Voice interpretation (and with it the OpenClaw
+     * session, which is scoped per workspace) reads Harbor's own selection, so a voice request
+     * made while the activation is still in flight, or after it failed, would be interpreted
+     * for the workspace the user just left. Held until Harbor confirms it.
+     */
+    @Volatile
+    private var intendedWorkspaceId: String? = null
+
+    fun activateWorkspace(workspaceId: String) {
+        intendedWorkspaceId = workspaceId
+        mutateAndRefresh {
+            client.postActivate(requireCredentials(), workspaceId)
+            noteActivated(workspaceId)
+        }
+    }
+
+    /** Re-asserts a touch selection Harbor has not taken yet; null when nothing is outstanding. */
+    private fun settleIntendedWorkspace(creds: HarborCredentials): List<HarborWorkspace>? {
+        val intended = intendedWorkspaceId ?: return null
+        var workspaces = client.listWorkspaces(creds)
+        if (workspaces.none { it.id == intended }) {
+            intendedWorkspaceId = null
+            return workspaces
+        }
+        if (workspaces.firstOrNull { it.selected }?.id != intended) {
+            client.postActivate(creds, intended)
+            workspaces = client.listWorkspaces(creds)
+        }
+        if (workspaces.firstOrNull { it.selected }?.id == intended) intendedWorkspaceId = null
+        return workspaces
     }
 
     /** Records an activation that succeeded, so every screen can move to where Harbor went. */
@@ -1718,7 +1746,10 @@ internal class HarborMirrorController(
 
     fun interpretContext(): HarborInterpretContext? {
         val creds = credentials ?: return null
-        return runCatching { client.fetchInterpretContext(creds) }.getOrNull()
+        return runCatching {
+            settleIntendedWorkspace(creds)
+            client.fetchInterpretContext(creds)
+        }.getOrNull()
     }
 
     fun fallbackSpokenSummary(workspaceId: String): HarborSpokenSummary? {
@@ -1779,6 +1810,7 @@ internal class HarborMirrorController(
             when (operation) {
                 is HarborOperation.Activate -> {
                     client.postActivate(creds, operation.workspaceId)
+                    intendedWorkspaceId = null
                     // The glass follows Harbor's own selection on its next poll; the phone
                     // screens follow their navigation state, so the switch has to be told to
                     // them or they keep polling the workspace they were left on.
