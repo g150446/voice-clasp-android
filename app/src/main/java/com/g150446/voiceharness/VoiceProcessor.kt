@@ -1474,6 +1474,14 @@ internal class VoiceProcessor(
     // --- Shared transcription + chat logic ---
 
     /** [preTranscribed] is the G2 command recording's ASR, so it is not transcribed twice. */
+    /** Runs [text] through the same path as a recognized node utterance (no audio, no ASR). */
+    internal fun submitTranscript(text: String) {
+        Log.i(TAG, "submitTranscript: $text")
+        scope.launch(Dispatchers.IO) {
+            transcribeAndRespondOnDevice(File(""), TranscriptionResult(text = text))
+        }
+    }
+
     private suspend fun transcribeAndRespondOnDevice(
         file: File,
         preTranscribed: TranscriptionResult? = null,

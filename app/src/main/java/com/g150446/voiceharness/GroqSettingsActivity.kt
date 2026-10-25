@@ -224,7 +224,7 @@ private fun ModelSettingsScreen(modifier: Modifier = Modifier) {
             ) { Text("Groq API キーを保存") }
         }
 
-        if (llmBackend == LlmBackendId.OPENROUTER) {
+        if (llmBackend == LlmBackendId.OPENROUTER || sttBackend == SttBackendId.OPENROUTER) {
             Spacer(modifier = Modifier.height(16.dp))
             Text("OpenRouter", fontSize = 14.sp)
             var orKey by remember { mutableStateOf(OpenRouterPrefs.getApiKey(context)) }
@@ -249,6 +249,91 @@ private fun ModelSettingsScreen(modifier: Modifier = Modifier) {
                 modifier = Modifier.fillMaxWidth()
             ) { Text("OpenRouter API キーを保存") }
 
+            if (sttBackend == SttBackendId.OPENROUTER) {
+                var sttModel by remember { mutableStateOf(OpenRouterPrefs.getSttModelId(context)) }
+                var sttModels by remember { mutableStateOf<List<OpenRouterModel>>(emptyList()) }
+                Spacer(modifier = Modifier.height(12.dp))
+                Text("音声認識モデル (OpenRouter STT)", fontSize = 14.sp)
+                Text("選択中: $sttModel", fontSize = 13.sp, modifier = Modifier.padding(vertical = 4.dp))
+                OpenRouterSttBackend.RECOMMENDED.forEach { (id, note) ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .selectable(
+                                selected = sttModel == id,
+                                onClick = {
+                                    sttModel = id
+                                    OpenRouterPrefs.setSttModelId(context, id)
+                                    actionStatus = "ASRモデル: $id"
+                                }
+                            )
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = sttModel == id,
+                            onClick = {
+                                sttModel = id
+                                OpenRouterPrefs.setSttModelId(context, id)
+                                actionStatus = "ASRモデル: $id"
+                            }
+                        )
+                        Column {
+                            Text(id, fontSize = 13.sp)
+                            Text(note, fontSize = 11.sp)
+                        }
+                    }
+                }
+                OutlinedButton(
+                    onClick = {
+                        actionStatus = "STTモデル一覧を取得中..."
+                        scope.launch {
+                            val result = OpenRouterSttBackend(context.applicationContext).fetchModels()
+                            if (result.isSuccess) {
+                                sttModels = result.getOrThrow()
+                                actionStatus = "STTモデル ${sttModels.size} 件を取得"
+                            } else {
+                                actionStatus = "取得失敗: ${result.exceptionOrNull()?.message}"
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("OpenRouterのSTTモデル一覧を取得") }
+                sttModels
+                    .filter { model -> OpenRouterSttBackend.RECOMMENDED.none { it.first == model.id } }
+                    .take(40)
+                    .forEach { model ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .selectable(
+                                    selected = sttModel == model.id,
+                                    onClick = {
+                                        sttModel = model.id
+                                        OpenRouterPrefs.setSttModelId(context, model.id)
+                                        actionStatus = "ASRモデル: ${model.id}"
+                                    }
+                                )
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = sttModel == model.id,
+                                onClick = {
+                                    sttModel = model.id
+                                    OpenRouterPrefs.setSttModelId(context, model.id)
+                                    actionStatus = "ASRモデル: ${model.id}"
+                                }
+                            )
+                            Column {
+                                Text(model.name, fontSize = 13.sp)
+                                Text(model.id, fontSize = 11.sp)
+                            }
+                        }
+                    }
+            }
+
+            if (llmBackend == LlmBackendId.OPENROUTER) {
             Spacer(modifier = Modifier.height(8.dp))
             OutlinedTextField(
                 value = modelQuery,
@@ -352,6 +437,7 @@ private fun ModelSettingsScreen(modifier: Modifier = Modifier) {
                     fontSize = 12.sp,
                     color = androidx.compose.ui.graphics.Color.Red
                 )
+            }
             }
         }
 

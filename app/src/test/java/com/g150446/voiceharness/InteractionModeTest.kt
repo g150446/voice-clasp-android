@@ -151,6 +151,11 @@ class InteractionModeTest {
     @Test
     fun `a bare mode request switches without the glasses prefix`() {
         assertEquals(InteractionMode.AI, spokenInteractionModeSwitch("パイロットモードに切り替えて"))
+        // Some cloud ASR models append a closing word after the command.
+        assertEquals(InteractionMode.HARBOR, spokenInteractionModeSwitch("ハーバーモードに切り替えてはい"))
+        assertEquals(InteractionMode.AI, spokenInteractionModeSwitch("パイロットモードに切り替えてありがとうございます"))
+        assertEquals(InteractionMode.HARBOR, spokenInteractionModeSwitch("ハーバーモードに切り替えてお願いします"))
+        assertEquals(null, spokenInteractionModeSwitch("ハーバーモードに切り替えて、そのあとコミットして"))
         assertEquals(InteractionMode.AI, spokenInteractionModeSwitch("パイロットモードに切り替え。"))
         assertEquals(InteractionMode.HARBOR, spokenInteractionModeSwitch("ハーバーモードにして"))
         assertEquals(InteractionMode.HARBOR, spokenInteractionModeSwitch("ターミナルハーバーモードに切り替えて"))

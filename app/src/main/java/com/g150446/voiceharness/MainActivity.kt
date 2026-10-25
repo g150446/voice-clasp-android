@@ -577,27 +577,30 @@ fun HomeScreen(
             )
         }
 
-        val profileLabel = modelStatus.profile.displayName
+        // The legacy "profile" is only the local-model preset; show what is really in use.
+        val sttLabel = ModelDisplayIds.sttShortLabel(context)
+        val llmLabel = ModelDisplayIds.llmShortLabel(context)
+        val readyLabel = "ASR: $sttLabel / LLM: $llmLabel"
         val coldStart = modelStatus.readiness == ModelReadiness.LOADING ||
             modelStatus.readiness == ModelReadiness.FOUND
         val statusText = if (harborInterpreting) "AIが指示を確認中…" else when (state) {
             VoiceState.READY -> when (modelStatus.readiness) {
-                ModelReadiness.READY -> "準備完了（$profileLabel）"
-                ModelReadiness.LOADING -> "モデル読み込み中（$profileLabel）…\n初回のため返事が遅くなります"
-                ModelReadiness.FOUND -> "検出済み（$profileLabel）\n初回の応答はモデル読み込みのため遅くなります"
+                ModelReadiness.READY -> "準備完了（$readyLabel）"
+                ModelReadiness.LOADING -> "モデル読み込み中（$readyLabel）…\n初回のため返事が遅くなります"
+                ModelReadiness.FOUND -> "検出済み（$readyLabel）\n初回の応答はモデル読み込みのため遅くなります"
                 ModelReadiness.MISSING -> "モデル未検出 — 設定を開く"
                 ModelReadiness.ERROR -> "モデルエラー — 設定を開く"
             }
             VoiceState.RECORDING -> "Recording (BLE)..."
             VoiceState.TRANSCRIBING -> if (coldStart) {
-                "文字起こし中（$profileLabel）…\n初回はモデル読み込みのため時間がかかります"
+                "文字起こし中（$sttLabel）…\n初回はモデル読み込みのため時間がかかります"
             } else {
-                "文字起こし中（$profileLabel）..."
+                "文字起こし中（$sttLabel）..."
             }
             VoiceState.RESPONDING -> if (coldStart || modelStatus.lastLoadMs > 30_000L && modelStatus.lastChatMs == 0L) {
-                "応答生成中（$profileLabel）…\n初回は遅くなることがあります"
+                "応答生成中（$llmLabel）…\n初回は遅くなることがあります"
             } else {
-                "応答生成中（$profileLabel）..."
+                "応答生成中（$llmLabel）..."
             }
             VoiceState.SPEAKING -> "読み上げ中..."
             VoiceState.ERROR -> "Error"

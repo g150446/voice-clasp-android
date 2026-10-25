@@ -28,8 +28,10 @@ class BackendIdsMigrationTest {
     }
 
     @Test
-    fun `openrouter is llm only`() {
+    fun `openrouter is both a cloud llm and a cloud stt`() {
         assertEquals(true, LlmBackendId.OPENROUTER.isCloud)
-        assertEquals(false, SttBackendId.entries.any { it.name == "OPENROUTER" })
+        assertEquals(true, SttBackendId.OPENROUTER.isCloud)
+        // Profiles stay Gemma / Qwen / Groq; OpenRouter STT is only ever picked on its own.
+        assertEquals(false, OnDeviceProfile.entries.any { it.name == "OPENROUTER" })
     }
 }

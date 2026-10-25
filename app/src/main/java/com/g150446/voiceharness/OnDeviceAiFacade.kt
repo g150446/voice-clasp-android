@@ -57,10 +57,18 @@ class OnDeviceAiFacade(
         SttBackendId.GEMMA -> registry.obtainGemma()
         SttBackendId.QWEN -> registry.obtainQwen()
         SttBackendId.GROQ -> registry.obtainGroq()
+        SttBackendId.OPENROUTER -> error("OpenRouter STT is not a VoiceAiBackend")
     }
 
+    private fun usesOpenRouterStt(): Boolean =
+        ModelManager.currentSttBackend(appContext) == SttBackendId.OPENROUTER
+
     override suspend fun ensureReady(): Result<Unit> {
-        val sttReady = sttBackend().ensureReady()
+        val sttReady = if (usesOpenRouterStt()) {
+            registry.obtainOpenRouterStt().ensureReady()
+        } else {
+            sttBackend().ensureReady()
+        }
         if (sttReady.isFailure) return sttReady
         if (isOpenClawRoute()) return registry.obtainOpenClaw().ensureReady()
         return when (ModelManager.currentLlmBackend(appContext)) {
@@ -75,6 +83,7 @@ class OnDeviceAiFacade(
         audioFile: File,
         vocabulary: List<AsrVocabularyTerm>
     ): Result<TranscriptionResult> {
+        if (usesOpenRouterStt()) return registry.obtainOpenRouterStt().transcribe(audioFile, vocabulary)
         val backend = sttBackend()
         if (ModelManager.currentSttBackend(appContext).isCloud) {
             return backend.transcribe(audioFile, vocabulary)

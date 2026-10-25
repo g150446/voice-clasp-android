@@ -6,6 +6,7 @@ object OpenRouterPrefs {
     private const val PREFS = "openrouter_prefs"
     private const val KEY_API_KEY_CIPHER = "api_key_cipher"
     private const val KEY_MODEL_ID = "model_id"
+    private const val KEY_STT_MODEL_ID = "stt_model_id"
     private const val KEY_MODELS_CACHE_JSON = "models_cache_json"
     private const val KEY_MODELS_CACHE_AT = "models_cache_at"
 
@@ -43,6 +44,20 @@ object OpenRouterPrefs {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit()
             .putString(KEY_MODEL_ID, modelId.trim())
+            .apply()
+    }
+
+    fun getSttModelId(context: Context): String =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString(KEY_STT_MODEL_ID, "")
+            ?.trim()
+            .orEmpty()
+            .ifBlank { OpenRouterSttBackend.DEFAULT_MODEL }
+
+    fun setSttModelId(context: Context, modelId: String) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_STT_MODEL_ID, modelId.trim())
             .apply()
     }
 

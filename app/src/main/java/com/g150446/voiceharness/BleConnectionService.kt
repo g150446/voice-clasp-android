@@ -641,6 +641,11 @@ class BleConnectionService : Service() {
             instance?.harborMirrorController?.sendInstruction(workspaceId, text, submit)
         fun sendHarborKey(workspaceId: String, key: String) =
             instance?.harborMirrorController?.sendKey(workspaceId, key)
+        /** Debug/testing: feed a recognized utterance into the node-voice pipeline. */
+        internal fun submitTranscript(text: String) {
+            instance?.voiceProcessor?.submitTranscript(text)
+        }
+
         fun confirmHarborCommand() = instance?.voiceProcessor?.handleSingleTap()
         fun cancelHarborCommand() = instance?.voiceProcessor?.handleDoubleTap()
         fun cancelHarborInterpreting() = instance?.voiceProcessor?.cancelHarborInterpreting()

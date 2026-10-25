@@ -15,6 +15,7 @@ internal class BackendRegistry(private val appContext: Context) {
     private val groq = AtomicReference<GroqVoiceAiBackend?>(null)
     private val openRouter = AtomicReference<OpenRouterLlmBackend?>(null)
     private val openClaw = AtomicReference<OpenClawLlmBackend?>(null)
+    private val openRouterStt = AtomicReference<OpenRouterSttBackend?>(null)
 
     fun obtainGemma(): GemmaOnDeviceBackend = synchronized(lock) {
         gemma.get() ?: GemmaOnDeviceBackend(appContext).also { gemma.set(it) }
@@ -30,6 +31,10 @@ internal class BackendRegistry(private val appContext: Context) {
 
     fun obtainOpenRouter(): OpenRouterLlmBackend = synchronized(lock) {
         openRouter.get() ?: OpenRouterLlmBackend(appContext).also { openRouter.set(it) }
+    }
+
+    fun obtainOpenRouterStt(): OpenRouterSttBackend = synchronized(lock) {
+        openRouterStt.get() ?: OpenRouterSttBackend(appContext).also { openRouterStt.set(it) }
     }
 
     fun obtainOpenClaw(): OpenClawLlmBackend = synchronized(lock) {

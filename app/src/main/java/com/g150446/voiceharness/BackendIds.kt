@@ -3,16 +3,18 @@ package com.g150446.voiceharness
 enum class SttBackendId {
     GEMMA,
     QWEN,
-    GROQ;
+    GROQ,
+    OPENROUTER;
 
     val displayName: String
         get() = when (this) {
             GEMMA -> "Gemma 4 E2B"
             QWEN -> "Qwen3-ASR"
             GROQ -> "Cloud (Groq Whisper)"
+            OPENROUTER -> "Cloud (OpenRouter STT)"
         }
 
-    val isCloud: Boolean get() = this == GROQ
+    val isCloud: Boolean get() = this == GROQ || this == OPENROUTER
 
     companion object {
         fun fromStorage(value: String?): SttBackendId =

@@ -52,9 +52,11 @@ internal fun glassesModeSwitchRemainder(text: String): String? {
 
 /**
  * ASR often trails a short command with a clipped sound: 「パイロットモードに切り替えてパッ」,
- * 「Chromeアプリを開いてP」. Up to two katakana or Latin letters after the command are ignored.
+ * 「Chromeアプリを開いてP」. Up to two katakana or Latin letters after the command are ignored,
+ * and so is a short closing word some models add (「…切り替えてはい」「…ありがとうございます」).
  */
-internal const val ASR_TAIL_NOISE = "(?:[ァ-ヶーッA-Za-z]{1,2})?"
+internal const val ASR_TAIL_NOISE =
+    "(?:[ァ-ヶーッA-Za-z]{1,2}|はい|ね|よ|どうぞ|お願い(?:します|いたします)?|ありがとう(?:ございます)?)?"
 
 private val SPOKEN_MODE_SWITCH = Regex(
     "^(.{1,20}?)モード(?:に|へ)?(?:切り?替え|切替|変更|チェンジ|移動)?(?:して|て|てください|る)?" +

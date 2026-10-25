@@ -383,49 +383,54 @@ object ModelManager {
         val qwenAsrProjector = toSlot(qwenAsrProjectorFile, "Qwen ASR projector")
         val lfmChat = toSlot(lfmChatFile, "LFM Chat")
 
-        val (readiness, path, fileName, size, message) = when (profile) {
-            OnDeviceProfile.GEMMA -> {
-                if (gemma.readiness == ModelReadiness.MISSING) {
-                    StatusTuple(ModelReadiness.MISSING, null, null, 0L, "Gemma 未検出。「ファイルから取り込む」で配置してください。")
-                } else {
-                    StatusTuple(ModelReadiness.FOUND, gemma.path, gemma.fileName, gemma.sizeBytes, "Gemma 検出済み")
+        // What is actually needed follows the selected ASR and LLM backends, not the legacy
+        // single "profile" (which cannot name e.g. OpenRouter for both).
+        val sttBackend = currentSttBackend(context)
+        val llmBackend = currentLlmBackend(context)
+        val missing = buildList {
+            when (sttBackend) {
+                SttBackendId.GEMMA -> if (gemma.readiness == ModelReadiness.MISSING) add("Gemma 未検出。「ファイルから取り込む」で配置してください。")
+                SttBackendId.QWEN -> if (qwenAsrDecoder.readiness == ModelReadiness.MISSING ||
+                    qwenAsrProjector.readiness == ModelReadiness.MISSING
+                ) add("Qwen3-ASR モデルが未検出です。")
+                SttBackendId.GROQ -> if (!GroqPrefs.hasApiKey(context)) add("Groq API キー未設定。下の欄に入力して保存してください。")
+                SttBackendId.OPENROUTER -> if (!OpenRouterPrefs.hasApiKey(context)) add("OpenRouter API キー未設定。下の欄に入力して保存してください。")
+            }
+            when (llmBackend) {
+                LlmBackendId.GEMMA -> if (gemma.readiness == ModelReadiness.MISSING) add("Gemma 未検出。「ファイルから取り込む」で配置してください。")
+                LlmBackendId.QWEN -> if (lfmChat.readiness == ModelReadiness.MISSING) add("LFM 2.5 モデルが未検出です。")
+                LlmBackendId.GROQ -> if (!GroqPrefs.hasApiKey(context)) add("Groq API キー未設定。下の欄に入力して保存してください。")
+                LlmBackendId.OPENROUTER -> when {
+                    !OpenRouterPrefs.hasApiKey(context) -> add("OpenRouter API キー未設定。下の欄に入力して保存してください。")
+                    OpenRouterPrefs.getModelId(context).isBlank() -> add("OpenRouter モデルが未選択です。")
                 }
             }
-            OnDeviceProfile.QWEN -> {
-                val missing = listOf(lfmChat, qwenAsrDecoder, qwenAsrProjector).count {
-                    it.readiness == ModelReadiness.MISSING
-                }
-                if (missing > 0) {
-                    StatusTuple(ModelReadiness.MISSING, null, null, 0L, "Qwen ASR + LFM 必須モデルが $missing 件未検出。")
-                } else {
-                    StatusTuple(
-                        ModelReadiness.FOUND,
-                        lfmChat.path,
-                        lfmChat.fileName,
-                        lfmChat.sizeBytes + qwenAsrDecoder.sizeBytes + qwenAsrProjector.sizeBytes,
-                        "Qwen3-ASR + LFM 2.5 検出済み"
-                    )
-                }
-            }
-            OnDeviceProfile.GROQ -> {
-                if (GroqPrefs.hasApiKey(context)) {
-                    StatusTuple(
-                        ModelReadiness.READY,
-                        null,
-                        "Groq Cloud",
-                        0L,
-                        "Groq API キー設定済み（Whisper + Chat）"
-                    )
-                } else {
-                    StatusTuple(
-                        ModelReadiness.MISSING,
-                        null,
-                        null,
-                        0L,
-                        "Groq API キー未設定。下の欄に入力して保存してください。"
-                    )
-                }
-            }
+        }.distinct()
+        val localSlot = when {
+            sttBackend == SttBackendId.GEMMA || llmBackend == LlmBackendId.GEMMA -> gemma
+            llmBackend == LlmBackendId.QWEN -> lfmChat
+            sttBackend == SttBackendId.QWEN -> qwenAsrDecoder
+            else -> null
+        }
+        val (readiness, path, fileName, size, message) = when {
+            missing.isNotEmpty() ->
+                StatusTuple(ModelReadiness.MISSING, null, null, 0L, missing.joinToString(" "))
+            localSlot == null ->
+                StatusTuple(
+                    ModelReadiness.READY,
+                    null,
+                    "Cloud",
+                    0L,
+                    "ASR: ${sttBackend.displayName} / LLM: ${llmBackend.displayName}",
+                )
+            else ->
+                StatusTuple(
+                    ModelReadiness.FOUND,
+                    localSlot.path,
+                    localSlot.fileName,
+                    localSlot.sizeBytes,
+                    "ローカルモデル検出済み",
+                )
         }
 
         val current = _status.value
