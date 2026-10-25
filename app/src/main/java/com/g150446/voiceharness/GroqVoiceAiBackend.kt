@@ -117,6 +117,7 @@ class GroqVoiceAiBackend(
                 harborToolEnabled = request.harborToolEnabled,
                 forceHarborCommand = request.forceHarborCommand,
                 harborContext = request.harborContext,
+                chatGptToolMode = request.chatGptToolMode,
             )
             val response = httpClient.newCall(
                 Request.Builder()

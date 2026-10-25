@@ -8,6 +8,7 @@
         <package android:name="com.evenrealities.even" />
         <package android:name="com.evenrealities.app" />
         <package android:name="com.evenrealities.evenapp" />
+        <package android:name="com.openai.chatgpt" />
         <intent>
             <action android:name="android.speech.RecognitionService" />
         </intent>

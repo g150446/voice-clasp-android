@@ -41,6 +41,7 @@ class RingAccessibilityService : AccessibilityService() {
 
         isServiceRunning = true
         KindlePageTurnController.attach(this)
+        ChatGptConversationController.attach(this)
         DebugMessageManager.addMessage("Accessibility Service started")
 
         startAccessibilityMonitoring()
@@ -51,6 +52,7 @@ class RingAccessibilityService : AccessibilityService() {
         Log.d(TAG, "RingAccessibilityService destroyed")
         releaseWakeLocks()
         KindlePageTurnController.detach(this)
+        ChatGptConversationController.detach(this)
         isServiceRunning = false
         DebugMessageManager.addMessage("Accessibility Service stopped")
     }
@@ -69,7 +71,11 @@ class RingAccessibilityService : AccessibilityService() {
                     AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
                     AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
             notificationTimeout = 100
-            packageNames = arrayOf(packageName, KindlePageTurnController.KINDLE_PACKAGE)
+            packageNames = arrayOf(
+                packageName,
+                KindlePageTurnController.KINDLE_PACKAGE,
+                ChatGptConversationController.CHATGPT_PACKAGE,
+            )
         }
         serviceInfo = info
 

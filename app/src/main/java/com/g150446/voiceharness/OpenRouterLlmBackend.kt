@@ -60,6 +60,7 @@ class OpenRouterLlmBackend(
                 harborToolEnabled = request.harborToolEnabled,
                 forceHarborCommand = request.forceHarborCommand,
                 harborContext = request.harborContext,
+                chatGptToolMode = request.chatGptToolMode,
             )
             val call = httpClient.newCall(
                 Request.Builder()

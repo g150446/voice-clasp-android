@@ -44,9 +44,12 @@ object GroqChatRequestBuilder {
         harborToolEnabled: Boolean = false,
         forceHarborCommand: Boolean = false,
         harborContext: HarborInterpretContext? = null,
+        chatGptToolMode: ChatGptToolMode = ChatGptToolMode.OFF,
     ): String {
         val currentTimeMillis = System.currentTimeMillis()
         val includeHarbor = harborToolEnabled || forceHarborCommand
+        val chatGptMode = if (forceHarborCommand) ChatGptToolMode.OFF else chatGptToolMode
+        val includeChatGpt = chatGptMode == ChatGptToolMode.ENABLED
         return JSONObject().apply {
             put("model", CHAT_MODEL)
             put("messages", JSONArray().apply {
@@ -61,6 +64,7 @@ object GroqChatRequestBuilder {
                             includeHarbor = includeHarbor,
                             harborOnly = forceHarborCommand,
                             harborContext = harborContext,
+                            chatGptMode = chatGptMode,
                         ),
                     )
                 })
@@ -71,7 +75,14 @@ object GroqChatRequestBuilder {
                     })
                 }
             })
-            put("tools", buildToolsArray(includeHarbor = includeHarbor, harborOnly = forceHarborCommand))
+            put(
+                "tools",
+                buildToolsArray(
+                    includeHarbor = includeHarbor,
+                    harborOnly = forceHarborCommand,
+                    includeChatGpt = includeChatGpt,
+                ),
+            )
             if (forceHarborCommand) {
                 put(
                     "tool_choice",
@@ -97,6 +108,7 @@ object GroqChatRequestBuilder {
         includeHarbor: Boolean = false,
         harborOnly: Boolean = false,
         harborContext: HarborInterpretContext? = null,
+        chatGptMode: ChatGptToolMode = ChatGptToolMode.OFF,
     ): String = buildSystemPromptWithReminders(
         languageCode,
         currentTimeMillis,
@@ -104,11 +116,13 @@ object GroqChatRequestBuilder {
         includeHarbor = includeHarbor,
         harborOnly = harborOnly,
         harborContext = harborContext,
+        chatGptMode = chatGptMode,
     )
 
     internal fun buildToolsArray(
         includeHarbor: Boolean,
         harborOnly: Boolean = false,
+        includeChatGpt: Boolean = false,
     ): JSONArray = JSONArray().apply {
         if (!harborOnly) {
             put(JSONObject().apply {
@@ -163,6 +177,9 @@ object GroqChatRequestBuilder {
         if (includeHarbor) {
             put(HarborCommandTool.toolDefinitionJson())
         }
+        if (includeChatGpt) {
+            put(ChatGptConversationTool.toolDefinitionJson())
+        }
     }
 
     private fun buildSystemPrompt(languageCode: String?): String {
@@ -195,6 +212,7 @@ object GroqChatRequestBuilder {
         includeHarbor: Boolean = false,
         harborOnly: Boolean = false,
         harborContext: HarborInterpretContext? = null,
+        chatGptMode: ChatGptToolMode = ChatGptToolMode.OFF,
     ): String {
         val harborContextAppendix = HarborContextPrompt.systemAppendix(harborContext)
         if (harborOnly) {
@@ -220,7 +238,8 @@ object GroqChatRequestBuilder {
         } else {
             ""
         }
-        return "$basePrompt $reminderInstructions$harborAppendix" +
+        val chatGptAppendix = ChatGptConversationTool.systemAppendix(chatGptMode)
+        return "$basePrompt $reminderInstructions$harborAppendix$chatGptAppendix" +
             ScreenContextPrompt.systemAppendix(screenContext?.withoutImage())
     }
 

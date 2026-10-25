@@ -41,6 +41,9 @@ data class ScreenContext(
     }
 }
 
+/** Whether the LLM may press buttons in the ChatGPT app, which needs the accessibility service. */
+enum class ChatGptToolMode { OFF, ENABLED, NEEDS_ACCESSIBILITY }
+
 data class ChatRequest(
     val conversationHistory: List<ConversationTurn>,
     val languageCode: String? = null,
@@ -54,6 +57,8 @@ data class ChatRequest(
     val forceHarborCommand: Boolean = false,
     /** Selected Terminal Harbor workspace scrollback / agent metadata for interpretation. */
     val harborContext: HarborInterpretContext? = null,
+    /** ENABLED exposes open_chatgpt_conversation; NEEDS_ACCESSIBILITY makes the LLM explain the setup. */
+    val chatGptToolMode: ChatGptToolMode = ChatGptToolMode.OFF,
 )
 
 data class AssistantRequest(
@@ -66,6 +71,7 @@ data class AssistantRequest(
     val languageCode: String? = null,
     val harborToolEnabled: Boolean = false,
     val harborContext: HarborInterpretContext? = null,
+    val chatGptToolMode: ChatGptToolMode = ChatGptToolMode.OFF,
 )
 
 data class AssistantResult(

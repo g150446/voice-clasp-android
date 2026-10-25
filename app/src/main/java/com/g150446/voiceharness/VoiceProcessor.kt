@@ -802,6 +802,13 @@ internal class VoiceProcessor(
         return AppLauncher.openSpoken(appContext, target)
     }
 
+    /** Tells the LLM whether it can press ChatGPT's button, or must explain the accessibility setup. */
+    private fun chatGptToolMode(): ChatGptToolMode = when {
+        isOpenClawRoute() -> ChatGptToolMode.OFF
+        isRingAccessibilityEnabled(appContext) -> ChatGptToolMode.ENABLED
+        else -> ChatGptToolMode.NEEDS_ACCESSIBILITY
+    }
+
     /** Switches the app mode by voice; returns what the user was told. */
     private suspend fun applyInteractionModeSwitch(mode: InteractionMode): String {
         Log.i(TAG, "Voice mode switch: $mode")
@@ -1640,6 +1647,7 @@ internal class VoiceProcessor(
                         languageCode = responseLanguageCode,
                         screenContext = screenContext,
                         harborToolEnabled = harborPaired,
+                        chatGptToolMode = chatGptToolMode(),
                         harborContext = harborContext,
                     )
                 )
@@ -1667,8 +1675,13 @@ internal class VoiceProcessor(
 
             val reminderCall = chatResult.toolCalls.firstOrNull { it.name == "set_reminder" }
             val harborCall = chatResult.toolCalls.firstOrNull { it.name == HARBOR_COMMAND_TOOL_NAME }
+            val chatGptCall = chatResult.toolCalls.firstOrNull { it.name == CHATGPT_CONVERSATION_TOOL_NAME }
             when {
                 reminderCall != null -> handleReminderToolCall(reminderCall.argumentsJson)
+                chatGptCall != null -> {
+                    handleChatGptConversationToolCall(BleConnectionService.transcription.value)
+                    BleConnectionService.setVoiceState(VoiceState.READY)
+                }
                 harborCall != null && harborPaired -> {
                     val args = HarborCommandTool.parse(
                         harborCall.argumentsJson,
@@ -1822,6 +1835,7 @@ internal class VoiceProcessor(
                     screenContext = screenContext,
                     languageCode = language,
                     harborToolEnabled = harborPaired,
+                    chatGptToolMode = chatGptToolMode(),
                     harborContext = harborContext,
                 )
             )
@@ -1846,6 +1860,20 @@ internal class VoiceProcessor(
                         requestId = requestId,
                         origin = origin,
                         allowPhoneAudio = speakResponse,
+                    )
+                    return@onSuccess
+                }
+                val chatGptCall = reply.toolCalls.firstOrNull { it.name == CHATGPT_CONVERSATION_TOOL_NAME }
+                if (chatGptCall != null) {
+                    val message = handleChatGptConversationToolCall(query)
+                    BleConnectionService.setVoiceState(VoiceState.READY)
+                    BleConnectionService.releaseAssistantProcessing()
+                    notifyAssistantUi(
+                        requestId = requestId,
+                        conversationId = conversationId,
+                        text = message,
+                        success = true,
+                        speaking = false,
                     )
                     return@onSuccess
                 }
@@ -2043,6 +2071,20 @@ internal class VoiceProcessor(
     }
 
     // --- Reminder helpers ---
+
+    /** Starts ChatGPT conversation mode without a confirm step; returns the feedback shown to the user. */
+    private suspend fun handleChatGptConversationToolCall(stt: String): String {
+        val message = when (ChatGptConversationController.start(appContext)) {
+            ChatGptConversationResult.DISPATCHED -> "ChatGPTの会話モードを開始しました"
+            ChatGptConversationResult.UNAVAILABLE -> "ユーザー補助が有効ではないため、ChatGPTを操作できません"
+            ChatGptConversationResult.APP_NOT_INSTALLED -> "ChatGPTアプリが見つかりません"
+            ChatGptConversationResult.BUTTON_NOT_FOUND -> "ChatGPTの会話モード開始ボタンが見つかりませんでした"
+            ChatGptConversationResult.FAILED -> "ChatGPTを起動できませんでした"
+        }
+        BleConnectionService.setResponse(message)
+        saveHistoryEntry(transcription = stt, response = message, isSilent = false, errorMessage = "")
+        return message
+    }
 
     private suspend fun handleReminderToolCall(argumentsStr: String) {
         val args = try {

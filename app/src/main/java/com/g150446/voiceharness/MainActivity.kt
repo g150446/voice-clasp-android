@@ -350,7 +350,7 @@ fun HomeScreen(
 
         if (accessibilityEnabled) {
             Text(
-                text = "ユーザー補助: 有効（Kindle自動／ページ送り）",
+                text = "ユーザー補助: 有効（Kindle自動／ページ送り・ChatGPT会話モード）",
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.padding(bottom = 8.dp),
@@ -378,7 +378,7 @@ fun HomeScreen(
                 Text("ユーザー補助を有効にする")
             }
             Text(
-                text = "リーダーモードのKindle自動表示とページめくりに必要です",
+                text = "リーダーモードのKindle自動表示とページめくり、ChatGPT会話モードの音声起動に必要です",
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(bottom = 4.dp),

@@ -15,10 +15,13 @@ object OpenRouterChatRequestBuilder {
         harborToolEnabled: Boolean = false,
         forceHarborCommand: Boolean = false,
         harborContext: HarborInterpretContext? = null,
+        chatGptToolMode: ChatGptToolMode = ChatGptToolMode.OFF,
     ): String {
         val currentTimeMillis = System.currentTimeMillis()
         val includeHarbor = supportsTools && (harborToolEnabled || forceHarborCommand)
         val harborOnly = supportsTools && forceHarborCommand
+        val chatGptMode = if (forceHarborCommand) ChatGptToolMode.OFF else chatGptToolMode
+        val includeChatGpt = supportsTools && chatGptMode == ChatGptToolMode.ENABLED
         val systemPrompt = GroqChatRequestBuilder.buildSystemPromptForOpenRouter(
             languageCode = languageCode,
             currentTimeMillis = currentTimeMillis,
@@ -26,6 +29,7 @@ object OpenRouterChatRequestBuilder {
             includeHarbor = includeHarbor,
             harborOnly = harborOnly,
             harborContext = harborContext,
+            chatGptMode = if (supportsTools) chatGptMode else ChatGptToolMode.OFF,
         )
         return JSONObject().apply {
             put("model", modelId)
@@ -55,6 +59,7 @@ object OpenRouterChatRequestBuilder {
                     GroqChatRequestBuilder.buildToolsArray(
                         includeHarbor = includeHarbor,
                         harborOnly = harborOnly,
+                        includeChatGpt = includeChatGpt,
                     ),
                 )
                 if (forceHarborCommand) {
