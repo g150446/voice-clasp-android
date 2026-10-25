@@ -45,8 +45,10 @@ object GroqChatRequestBuilder {
         forceHarborCommand: Boolean = false,
         harborContext: HarborInterpretContext? = null,
         chatGptToolMode: ChatGptToolMode = ChatGptToolMode.OFF,
+        operatePhoneToolEnabled: Boolean = false,
     ): String {
         val currentTimeMillis = System.currentTimeMillis()
+        val includeOperatePhone = operatePhoneToolEnabled && !forceHarborCommand
         val includeHarbor = harborToolEnabled || forceHarborCommand
         val chatGptMode = if (forceHarborCommand) ChatGptToolMode.OFF else chatGptToolMode
         val includeChatGpt = chatGptMode == ChatGptToolMode.ENABLED ||
@@ -68,6 +70,7 @@ object GroqChatRequestBuilder {
                             harborOnly = forceHarborCommand,
                             harborContext = harborContext,
                             chatGptMode = chatGptMode,
+                            operatePhone = includeOperatePhone,
                         ),
                     )
                 })
@@ -86,6 +89,7 @@ object GroqChatRequestBuilder {
                     includeChatGpt = includeChatGpt,
                     includeAccessibilitySetup = includeAccessibilitySetup,
                     includeAccessibilityDisable = includeAccessibilityDisable,
+                    includeOperatePhone = includeOperatePhone,
                 ),
             )
             if (forceHarborCommand) {
@@ -105,6 +109,33 @@ object GroqChatRequestBuilder {
         }.toString()
     }
 
+    /** One step of the screen agent: its own prompt, only its tools, and a function call is mandatory. */
+    fun buildAgentRequestBody(
+        conversationHistory: List<ConversationTurn>,
+        languageCode: String?,
+        model: String = CHAT_MODEL,
+    ): String = JSONObject().apply {
+        put("model", model)
+        put("messages", JSONArray().apply {
+            put(JSONObject().apply {
+                put("role", "system")
+                put("content", agentSystemPrompt(languageCode))
+            })
+            conversationHistory.forEach { turn ->
+                put(JSONObject().apply {
+                    put("role", turn.role)
+                    put("content", turn.content)
+                })
+            }
+        })
+        put("tools", ScreenAgentTools.agentToolsArray())
+        put("tool_choice", "required")
+    }.toString()
+
+    internal fun agentSystemPrompt(languageCode: String?): String =
+        ScreenAgentTools.AGENT_SYSTEM_PROMPT +
+            (languageCode?.takeIf { it.isNotBlank() }?.let { " The user's language code is $it." } ?: "")
+
     /** Exposed for OpenRouter system prompt reuse (text screen context only). */
     fun buildSystemPromptForOpenRouter(
         languageCode: String?,
@@ -114,6 +145,7 @@ object GroqChatRequestBuilder {
         harborOnly: Boolean = false,
         harborContext: HarborInterpretContext? = null,
         chatGptMode: ChatGptToolMode = ChatGptToolMode.OFF,
+        operatePhone: Boolean = false,
     ): String = buildSystemPromptWithReminders(
         languageCode,
         currentTimeMillis,
@@ -122,6 +154,7 @@ object GroqChatRequestBuilder {
         harborOnly = harborOnly,
         harborContext = harborContext,
         chatGptMode = chatGptMode,
+        operatePhone = operatePhone,
     )
 
     internal fun buildToolsArray(
@@ -130,6 +163,7 @@ object GroqChatRequestBuilder {
         includeChatGpt: Boolean = false,
         includeAccessibilitySetup: Boolean = false,
         includeAccessibilityDisable: Boolean = false,
+        includeOperatePhone: Boolean = false,
     ): JSONArray = JSONArray().apply {
         if (!harborOnly) {
             put(JSONObject().apply {
@@ -193,6 +227,9 @@ object GroqChatRequestBuilder {
         if (includeAccessibilityDisable) {
             put(AccessibilitySetupTool.disableToolDefinitionJson())
         }
+        if (includeOperatePhone) {
+            put(ScreenAgentTools.operatePhoneToolDefinition())
+        }
     }
 
     private fun buildSystemPrompt(languageCode: String?): String {
@@ -226,6 +263,7 @@ object GroqChatRequestBuilder {
         harborOnly: Boolean = false,
         harborContext: HarborInterpretContext? = null,
         chatGptMode: ChatGptToolMode = ChatGptToolMode.OFF,
+        operatePhone: Boolean = false,
     ): String {
         val harborContextAppendix = HarborContextPrompt.systemAppendix(harborContext)
         if (harborOnly) {
@@ -252,7 +290,8 @@ object GroqChatRequestBuilder {
             ""
         }
         val chatGptAppendix = ChatGptConversationTool.systemAppendix(chatGptMode, harborActive = includeHarbor)
-        return "$basePrompt $reminderInstructions$harborAppendix$chatGptAppendix" +
+        val operateAppendix = if (operatePhone) " ${ScreenAgentTools.OPERATE_PHONE_APPENDIX}" else ""
+        return "$basePrompt $reminderInstructions$harborAppendix$chatGptAppendix$operateAppendix" +
             ScreenContextPrompt.systemAppendix(screenContext?.withoutImage())
     }
 

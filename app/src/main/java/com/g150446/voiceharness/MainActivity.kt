@@ -454,6 +454,52 @@ fun HomeScreen(
             )
         }
 
+        // AI screen operation: off until switched on here; only Pilot offers it to the LLM.
+        val screenAgentPrefs = remember { ScreenAgentPreferences(context) }
+        var screenAgentEnabled by remember { mutableStateOf(screenAgentPrefs.enabled()) }
+        val screenAgentStatus by ScreenAgentState.status.collectAsState()
+        val screenAgentConfirm by ScreenAgentState.pendingConfirm.collectAsState()
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text("AIに他アプリの画面操作を許可", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            Switch(
+                checked = screenAgentEnabled,
+                onCheckedChange = {
+                    screenAgentEnabled = it
+                    screenAgentPrefs.setEnabled(it)
+                },
+            )
+        }
+        Text(
+            text = "音声で「〇〇アプリで△△して」と頼むと、AIが画面を読んでタップ・入力します（Pilotモード・" +
+                "ユーザー補助が有効なとき）。送信・購入・削除などは押す前に確認します。" +
+                "銀行・決済・設定アプリは操作しません。",
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(bottom = 4.dp),
+        )
+        screenAgentStatus?.let { status ->
+            Text(status, fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+            OutlinedButton(
+                onClick = ScreenAgentState::requestStop,
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                modifier = Modifier.padding(bottom = 4.dp),
+            ) { Text("停止", fontSize = 11.sp) }
+        }
+        screenAgentConfirm?.let { question ->
+            Text(question, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.padding(bottom = 8.dp),
+            ) {
+                Button(onClick = { ScreenAgentState.respond(true) }) { Text("実行") }
+                OutlinedButton(onClick = { ScreenAgentState.respond(false) }) { Text("中止") }
+            }
+        }
+
         val (dotColor, bleLabel) = when (bleConnectionState) {
             BleConnectionState.CONNECTED -> Color(0xFF43A047) to "BLE Connected"
             BleConnectionState.CONNECTING -> Color(0xFFFFA726) to "BLE Connecting..."

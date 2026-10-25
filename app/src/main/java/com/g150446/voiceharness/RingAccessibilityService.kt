@@ -42,6 +42,7 @@ class RingAccessibilityService : AccessibilityService() {
         isServiceRunning = true
         KindlePageTurnController.attach(this)
         ChatGptConversationController.attach(this)
+        ScreenOperator.attach(this)
         DebugMessageManager.addMessage("Accessibility Service started")
 
         startAccessibilityMonitoring()
@@ -53,6 +54,7 @@ class RingAccessibilityService : AccessibilityService() {
         releaseWakeLocks()
         KindlePageTurnController.detach(this)
         ChatGptConversationController.detach(this)
+        ScreenOperator.detach(this)
         isServiceRunning = false
         DebugMessageManager.addMessage("Accessibility Service stopped")
     }
@@ -71,11 +73,7 @@ class RingAccessibilityService : AccessibilityService() {
                     AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
                     AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
             notificationTimeout = 100
-            packageNames = arrayOf(
-                packageName,
-                KindlePageTurnController.KINDLE_PACKAGE,
-                ChatGptConversationController.CHATGPT_PACKAGE,
-            )
+            // No packageNames filter: the screen agent has to see whichever app it operates.
         }
         serviceInfo = info
 

@@ -110,15 +110,23 @@ class GroqVoiceAiBackend(
         runCatching {
             val apiKey = requireApiKey()
             val started = System.currentTimeMillis()
-            val chatJson = GroqChatRequestBuilder.buildRequestBodyWithFunctionCalling(
-                conversationHistory = request.conversationHistory,
-                languageCode = request.languageCode,
-                screenContext = request.screenContext,
-                harborToolEnabled = request.harborToolEnabled,
-                forceHarborCommand = request.forceHarborCommand,
-                harborContext = request.harborContext,
-                chatGptToolMode = request.chatGptToolMode,
-            )
+            val chatJson = if (request.screenAgent) {
+                GroqChatRequestBuilder.buildAgentRequestBody(
+                    conversationHistory = request.conversationHistory,
+                    languageCode = request.languageCode,
+                )
+            } else {
+                GroqChatRequestBuilder.buildRequestBodyWithFunctionCalling(
+                    conversationHistory = request.conversationHistory,
+                    languageCode = request.languageCode,
+                    screenContext = request.screenContext,
+                    harborToolEnabled = request.harborToolEnabled,
+                    forceHarborCommand = request.forceHarborCommand,
+                    harborContext = request.harborContext,
+                    chatGptToolMode = request.chatGptToolMode,
+                    operatePhoneToolEnabled = request.operatePhoneToolEnabled,
+                )
+            }
             val response = httpClient.newCall(
                 Request.Builder()
                     .url(CHAT_COMPLETIONS_URL)

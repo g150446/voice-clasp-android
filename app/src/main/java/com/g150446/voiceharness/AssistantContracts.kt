@@ -68,6 +68,10 @@ data class ChatRequest(
     val harborContext: HarborInterpretContext? = null,
     /** ENABLED exposes open_chatgpt_conversation; NEEDS_ACCESSIBILITY makes the LLM explain the setup. */
     val chatGptToolMode: ChatGptToolMode = ChatGptToolMode.OFF,
+    /** Offer operate_phone (the screen agent). Pilot only, behind the home-screen switch. */
+    val operatePhoneToolEnabled: Boolean = false,
+    /** One step of the screen agent's observe-act loop: agent prompt and tools only. */
+    val screenAgent: Boolean = false,
 )
 
 data class AssistantRequest(
@@ -81,6 +85,7 @@ data class AssistantRequest(
     val harborToolEnabled: Boolean = false,
     val harborContext: HarborInterpretContext? = null,
     val chatGptToolMode: ChatGptToolMode = ChatGptToolMode.OFF,
+    val operatePhoneToolEnabled: Boolean = false,
 )
 
 data class AssistantResult(

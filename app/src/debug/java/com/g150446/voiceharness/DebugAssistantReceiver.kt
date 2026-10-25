@@ -7,10 +7,13 @@ import android.util.Log
 
 /**
  * adb shell am broadcast -a com.g150446.voiceharness.debug.ASK \
- *   -n com.g150446.voiceharness/.DebugAssistantReceiver --es text "..." [--es mode AI|HARBOR] [--es conv harness-node] [--ez speak true]
+ *   -n com.g150446.voiceharness/.DebugAssistantReceiver --es text "..." [--es mode AI|HARBOR] [--es conv harness-node] [--ez speak true] [--ez screen_agent true|false]
  */
 class DebugAssistantReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
+        if (intent.hasExtra("screen_agent")) {
+            ScreenAgentPreferences(context).setEnabled(intent.getBooleanExtra("screen_agent", false))
+        }
         val text = intent.getStringExtra("text").orEmpty()
         if (text.isBlank()) return
         intent.getStringExtra("mode")?.let { name ->

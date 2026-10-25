@@ -16,8 +16,10 @@ object OpenRouterChatRequestBuilder {
         forceHarborCommand: Boolean = false,
         harborContext: HarborInterpretContext? = null,
         chatGptToolMode: ChatGptToolMode = ChatGptToolMode.OFF,
+        operatePhoneToolEnabled: Boolean = false,
     ): String {
         val currentTimeMillis = System.currentTimeMillis()
+        val includeOperatePhone = supportsTools && operatePhoneToolEnabled && !forceHarborCommand
         val includeHarbor = supportsTools && (harborToolEnabled || forceHarborCommand)
         val harborOnly = supportsTools && forceHarborCommand
         val chatGptMode = if (forceHarborCommand) ChatGptToolMode.OFF else chatGptToolMode
@@ -36,6 +38,7 @@ object OpenRouterChatRequestBuilder {
             harborOnly = harborOnly,
             harborContext = harborContext,
             chatGptMode = if (supportsTools) chatGptMode else ChatGptToolMode.OFF,
+            operatePhone = includeOperatePhone,
         )
         return JSONObject().apply {
             put("model", modelId)
@@ -68,6 +71,7 @@ object OpenRouterChatRequestBuilder {
                         includeChatGpt = includeChatGpt,
                         includeAccessibilitySetup = includeAccessibilitySetup,
                         includeAccessibilityDisable = includeAccessibilityDisable,
+                        includeOperatePhone = includeOperatePhone,
                     ),
                 )
                 if (forceHarborCommand) {
@@ -87,6 +91,13 @@ object OpenRouterChatRequestBuilder {
             }
         }.toString()
     }
+
+    /** One step of the screen agent (tools are mandatory; the caller has checked the model supports them). */
+    fun buildAgentRequestBody(
+        modelId: String,
+        conversationHistory: List<ConversationTurn>,
+        languageCode: String?,
+    ): String = GroqChatRequestBuilder.buildAgentRequestBody(conversationHistory, languageCode, modelId)
 
     private fun buildMultimodalUserContent(text: String, jpegBytes: ByteArray): JSONArray {
         val b64 = Base64.encodeToString(jpegBytes, Base64.NO_WRAP)

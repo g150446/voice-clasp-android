@@ -35,6 +35,7 @@ internal class BackendAssistantGateway(
                         harborToolEnabled = request.harborToolEnabled,
                         harborContext = request.harborContext,
                         chatGptToolMode = request.chatGptToolMode,
+                        operatePhoneToolEnabled = request.operatePhoneToolEnabled,
                     )
                 ).getOrThrow()
                 if (result.text.isNotBlank()) session.addTurn("assistant", result.text)

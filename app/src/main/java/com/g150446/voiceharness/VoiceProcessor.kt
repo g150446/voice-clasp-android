@@ -802,6 +802,49 @@ internal class VoiceProcessor(
         return AppLauncher.openSpoken(appContext, target)
     }
 
+    /** The LLM may be offered operate_phone: switch on, accessibility on, Pilot, not OpenClaw. */
+    private fun operatePhoneEnabled(): Boolean =
+        ScreenAgentPreferences(appContext).enabled() &&
+            ScreenOperator.isAvailable() &&
+            isRingAccessibilityEnabled(appContext) &&
+            BleConnectionService.interactionMode.value == InteractionMode.AI &&
+            !isOpenClawRoute()
+
+    /**
+     * Runs the screen agent for an operate_phone call and returns the sentence for the user.
+     * Risky taps wait for a ring/glass tap (single = go, double = stop) or the home-screen buttons.
+     */
+    private suspend fun runScreenAgent(task: String, languageCode: String?): String {
+        if (!operatePhoneEnabled()) return "画面操作が許可されていません。ホーム画面でオンにしてください"
+        ScreenAgentState.beginRun()
+        ScreenAgentState.setStatus("AIが画面を操作中…")
+        val agent = ScreenAgent(
+            operator = ScreenOperator,
+            chat = { request -> aiBackend.chat(request) },
+            confirm = { question ->
+                val prompt = "$question 1タップで実行、ダブルタップで中止"
+                BleConnectionService.setResponse(prompt)
+                speakHarborAnnouncement(prompt, manageVoiceState = false)
+                ScreenAgentState.ask(question)
+            },
+            onProgress = { step ->
+                ScreenAgentState.setStatus("AIが画面を操作中: $step")
+                BleConnectionService.setResponse("画面操作: $step")
+            },
+            isStopRequested = ScreenAgentState::isStopRequested,
+        )
+        return try {
+            agent.run(task, languageCode).message
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            Log.e(TAG, "Screen agent failed", error)
+            "画面操作に失敗しました"
+        } finally {
+            ScreenAgentState.setStatus(null)
+        }
+    }
+
     /** Tells the LLM whether it can press ChatGPT's button, or must explain the accessibility setup. */
     private fun chatGptToolMode(): ChatGptToolMode = when {
         isOpenClawRoute() -> ChatGptToolMode.OFF
@@ -1654,6 +1697,7 @@ internal class VoiceProcessor(
                         screenContext = screenContext,
                         harborToolEnabled = harborPaired,
                         chatGptToolMode = chatGptToolMode(),
+                        operatePhoneToolEnabled = operatePhoneEnabled(),
                         harborContext = harborContext,
                     )
                 )
@@ -1690,11 +1734,21 @@ internal class VoiceProcessor(
             val chatGptCall = chatResult.toolCalls.firstOrNull { it.name == CHATGPT_CONVERSATION_TOOL_NAME }
             val accessibilityCall = chatResult.toolCalls.firstOrNull { it.name == ENABLE_ACCESSIBILITY_TOOL_NAME }
             val accessibilityOffCall = chatResult.toolCalls.firstOrNull { it.name == DISABLE_ACCESSIBILITY_TOOL_NAME }
+            val operateCall = chatResult.toolCalls.firstOrNull { it.name == OPERATE_PHONE_TOOL_NAME }
             when {
                 reminderCall != null -> handleReminderToolCall(reminderCall.argumentsJson)
                 chatGptCall != null -> {
                     handleChatGptConversationToolCall(BleConnectionService.transcription.value)
                     BleConnectionService.setVoiceState(VoiceState.READY)
+                }
+                operateCall != null -> {
+                    val task = ScreenAgentTools.parseTask(
+                        operateCall.argumentsJson,
+                        BleConnectionService.transcription.value,
+                    )
+                    val message = runScreenAgent(task, responseLanguageCode)
+                    saveHistoryEntry(task, message, isSilent = false, errorMessage = "")
+                    presentResponse(message)
                 }
                 // Unlike ChatGPT's conversation mode (which takes the microphone), the accessibility
                 // result has to be read out: nothing else tells the user it worked.
@@ -1856,6 +1910,7 @@ internal class VoiceProcessor(
                     languageCode = language,
                     harborToolEnabled = harborPaired,
                     chatGptToolMode = chatGptToolMode(),
+                        operatePhoneToolEnabled = operatePhoneEnabled(),
                     harborContext = harborContext,
                 )
             )
@@ -1892,6 +1947,26 @@ internal class VoiceProcessor(
                 val accessibilityCall = reply.toolCalls.firstOrNull { it.name == ENABLE_ACCESSIBILITY_TOOL_NAME }
                 val accessibilityOffCall = reply.toolCalls.firstOrNull { it.name == DISABLE_ACCESSIBILITY_TOOL_NAME }
                 val chatGptCall = reply.toolCalls.firstOrNull { it.name == CHATGPT_CONVERSATION_TOOL_NAME }
+                val operateCall = reply.toolCalls.firstOrNull { it.name == OPERATE_PHONE_TOOL_NAME }
+                if (operateCall != null) {
+                    val task = ScreenAgentTools.parseTask(operateCall.argumentsJson, query)
+                    val message = runScreenAgent(task, language)
+                    saveHistoryEntry(task, message, isSilent = false, errorMessage = "")
+                    notifyAssistantUi(
+                        requestId = requestId,
+                        conversationId = conversationId,
+                        text = message,
+                        success = true,
+                        speaking = speakResponse,
+                    )
+                    presentResponse(
+                        message,
+                        requestId = requestId,
+                        origin = origin,
+                        allowPhoneAudio = speakResponse,
+                    )
+                    return@onSuccess
+                }
                 if (accessibilityCall != null || accessibilityOffCall != null) {
                     val message = if (accessibilityCall != null) {
                         handleEnableAccessibilityToolCall(query)
@@ -2568,6 +2643,10 @@ internal class VoiceProcessor(
 
     /** Single tap is routed to recording only while SINGLE mode owns it. */
     internal fun handleSingleTap() {
+        if (ScreenAgentState.respond(true)) {
+            Log.i(TAG, "Single tap: confirm screen action")
+            return
+        }
         val now = SystemClock.elapsedRealtime()
         if (pendingHarborCommand == null && pendingOpenClawText == null &&
             shouldSuppressSingleTapAfterDouble(now, lastDoubleTapElapsedMs)
@@ -2676,6 +2755,10 @@ internal class VoiceProcessor(
 
     internal fun handleDoubleTap() {
         armSingleTapSuppress("double-tap")
+        if (ScreenAgentState.respond(false)) {
+            Log.i(TAG, "Double tap: refuse screen action")
+            return
+        }
         pendingTapStartJob?.cancel()
         pendingTapStartJob = null
         val voiceState = BleConnectionService.voiceState.value
@@ -2744,6 +2827,7 @@ internal class VoiceProcessor(
     }
 
     private fun interruptHarnessPipeline(interruptedState: VoiceState) {
+        ScreenAgentState.requestStop()
         harnessPipelineInterrupted.set(true)
         harnessPipelineJob?.cancel()
         harnessPipelineJob = null

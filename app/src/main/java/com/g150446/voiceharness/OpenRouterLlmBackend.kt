@@ -50,18 +50,30 @@ class OpenRouterLlmBackend(
             val supportsImage = selected?.supportsImage ?: false
 
             val started = System.currentTimeMillis()
-            val body = OpenRouterChatRequestBuilder.buildRequestBody(
-                modelId = modelId,
-                conversationHistory = request.conversationHistory,
-                languageCode = request.languageCode,
-                screenContext = request.screenContext,
-                supportsTools = supportsTools,
-                supportsImage = supportsImage,
-                harborToolEnabled = request.harborToolEnabled,
-                forceHarborCommand = request.forceHarborCommand,
-                harborContext = request.harborContext,
-                chatGptToolMode = request.chatGptToolMode,
-            )
+            if (request.screenAgent && !supportsTools) {
+                error("選択中のモデルは関数呼び出しに対応していないため、画面操作できません。")
+            }
+            val body = if (request.screenAgent) {
+                OpenRouterChatRequestBuilder.buildAgentRequestBody(
+                    modelId = modelId,
+                    conversationHistory = request.conversationHistory,
+                    languageCode = request.languageCode,
+                )
+            } else {
+                OpenRouterChatRequestBuilder.buildRequestBody(
+                    modelId = modelId,
+                    conversationHistory = request.conversationHistory,
+                    languageCode = request.languageCode,
+                    screenContext = request.screenContext,
+                    supportsTools = supportsTools,
+                    supportsImage = supportsImage,
+                    harborToolEnabled = request.harborToolEnabled,
+                    forceHarborCommand = request.forceHarborCommand,
+                    harborContext = request.harborContext,
+                    chatGptToolMode = request.chatGptToolMode,
+                    operatePhoneToolEnabled = request.operatePhoneToolEnabled,
+                )
+            }
             val call = httpClient.newCall(
                 Request.Builder()
                     .url("$baseUrl/chat/completions")
