@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Debug builds only: lets adb inject a text request into the assistant pipeline. -->
+        <receiver
+            android:name=".DebugAssistantReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.g150446.voiceharness.debug.ASK" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

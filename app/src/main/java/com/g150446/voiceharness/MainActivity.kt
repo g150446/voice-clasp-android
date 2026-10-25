@@ -265,6 +265,23 @@ fun HomeScreen(
     ) {
         accessibilityEnabled = isRingAccessibilityEnabled(context)
     }
+    // Voice (or the buttons) flips the Secure setting while this screen stays open.
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        val settingsObserver = object : android.database.ContentObserver(handler) {
+            override fun onChange(selfChange: Boolean) {
+                accessibilityEnabled = isRingAccessibilityEnabled(context)
+            }
+        }
+        val resolver = context.contentResolver
+        resolver.registerContentObserver(
+            Settings.Secure.getUriFor(Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES),
+            false,
+            settingsObserver,
+        )
+        accessibilityEnabled = isRingAccessibilityEnabled(context)
+        onDispose { resolver.unregisterContentObserver(settingsObserver) }
+    }
     androidx.compose.runtime.DisposableEffect(Unit) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
             if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
@@ -348,49 +365,93 @@ fun HomeScreen(
             )
         }
 
-        if (accessibilityEnabled) {
-            Text(
-                text = "ユーザー補助: 有効（Kindle自動／ページ送り・ChatGPT会話モード）",
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(bottom = 8.dp),
-            )
-        } else {
+        val secureSettingsGranted = canWriteSecureSettings(context)
+        fun openAccessibilitySettings() {
+            accessibilitySettingsError = null
+            val intent = accessibilitySettingsIntent(context)
+            try {
+                accessibilitySettingsLauncher.launch(intent)
+            } catch (e: Exception) {
+                Log.w(TAG, "ActivityResult launch failed for accessibility settings", e)
+                try {
+                    context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                } catch (e2: Exception) {
+                    Log.w(TAG, "Could not open accessibility settings", e2)
+                    accessibilitySettingsError =
+                        "設定画面を開けませんでした。Android設定→ユーザー補助から Voice Harness を切り替えてください"
+                }
+            }
+        }
+        Text(
+            text = if (accessibilityEnabled) {
+                "ユーザー補助: 有効（Kindle自動／ページ送り・ChatGPT会話モード）"
+            } else {
+                "ユーザー補助: 無効"
+            },
+            fontSize = 12.sp,
+            color = if (accessibilityEnabled) MaterialTheme.colorScheme.primary
+            else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(bottom = 4.dp),
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
             OutlinedButton(
                 onClick = {
                     accessibilitySettingsError = null
-                    val intent = accessibilitySettingsIntent(context)
-                    try {
-                        accessibilitySettingsLauncher.launch(intent)
-                    } catch (e: Exception) {
-                        Log.w(TAG, "ActivityResult launch failed for accessibility settings", e)
-                        try {
-                            context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                        } catch (e2: Exception) {
-                            Log.w(TAG, "Could not open accessibility settings", e2)
-                            accessibilitySettingsError =
-                                "設定画面を開けませんでした。Android設定→ユーザー補助から Voice Harness を有効にしてください"
+                    if (secureSettingsGranted) {
+                        val result = enableRingAccessibility(context)
+                        accessibilityEnabled = isRingAccessibilityEnabled(context)
+                        if (result == EnableAccessibilityResult.FAILED) {
+                            accessibilitySettingsError = "ユーザー補助を有効にできませんでした"
                         }
+                    } else {
+                        openAccessibilitySettings()
                     }
                 },
-                modifier = Modifier.padding(bottom = 8.dp),
-            ) {
-                Text("ユーザー補助を有効にする")
-            }
+                enabled = !accessibilityEnabled,
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+            ) { Text("有効にする", fontSize = 11.sp) }
+            OutlinedButton(
+                onClick = {
+                    accessibilitySettingsError = null
+                    if (secureSettingsGranted) {
+                        val result = disableRingAccessibility(context)
+                        accessibilityEnabled = isRingAccessibilityEnabled(context)
+                        if (result == DisableAccessibilityResult.FAILED) {
+                            accessibilitySettingsError = "ユーザー補助を無効にできませんでした"
+                        }
+                    } else {
+                        openAccessibilitySettings()
+                    }
+                },
+                enabled = accessibilityEnabled,
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+            ) { Text("無効にする", fontSize = 11.sp) }
+            OutlinedButton(
+                onClick = ::openAccessibilitySettings,
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+            ) { Text("設定画面", fontSize = 11.sp) }
+        }
+        Text(
+            text = if (secureSettingsGranted) {
+                "音声で「ユーザー補助を有効／無効にして」と頼めます（Harbor中は「スマホの」を付ける）"
+            } else {
+                "ボタン・音声で切り替えるには、PCから一度だけ実行: adb shell pm grant " +
+                    "${context.packageName} android.permission.WRITE_SECURE_SETTINGS"
+            },
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(bottom = 4.dp),
+        )
+        accessibilitySettingsError?.let { message ->
             Text(
-                text = "リーダーモードのKindle自動表示とページめくり、ChatGPT会話モードの音声起動に必要です",
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(bottom = 4.dp),
+                text = message,
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(bottom = 8.dp),
             )
-            accessibilitySettingsError?.let { message ->
-                Text(
-                    text = message,
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.padding(bottom = 8.dp),
-                )
-            }
         }
 
         val (dotColor, bleLabel) = when (bleConnectionState) {

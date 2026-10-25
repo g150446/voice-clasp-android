@@ -49,7 +49,10 @@ object GroqChatRequestBuilder {
         val currentTimeMillis = System.currentTimeMillis()
         val includeHarbor = harborToolEnabled || forceHarborCommand
         val chatGptMode = if (forceHarborCommand) ChatGptToolMode.OFF else chatGptToolMode
-        val includeChatGpt = chatGptMode == ChatGptToolMode.ENABLED
+        val includeChatGpt = chatGptMode == ChatGptToolMode.ENABLED ||
+            chatGptMode == ChatGptToolMode.ENABLED_CAN_DISABLE
+        val includeAccessibilityDisable = chatGptMode == ChatGptToolMode.ENABLED_CAN_DISABLE
+        val includeAccessibilitySetup = chatGptMode == ChatGptToolMode.CAN_ENABLE_ACCESSIBILITY
         return JSONObject().apply {
             put("model", CHAT_MODEL)
             put("messages", JSONArray().apply {
@@ -81,6 +84,8 @@ object GroqChatRequestBuilder {
                     includeHarbor = includeHarbor,
                     harborOnly = forceHarborCommand,
                     includeChatGpt = includeChatGpt,
+                    includeAccessibilitySetup = includeAccessibilitySetup,
+                    includeAccessibilityDisable = includeAccessibilityDisable,
                 ),
             )
             if (forceHarborCommand) {
@@ -123,6 +128,8 @@ object GroqChatRequestBuilder {
         includeHarbor: Boolean,
         harborOnly: Boolean = false,
         includeChatGpt: Boolean = false,
+        includeAccessibilitySetup: Boolean = false,
+        includeAccessibilityDisable: Boolean = false,
     ): JSONArray = JSONArray().apply {
         if (!harborOnly) {
             put(JSONObject().apply {
@@ -179,6 +186,12 @@ object GroqChatRequestBuilder {
         }
         if (includeChatGpt) {
             put(ChatGptConversationTool.toolDefinitionJson())
+        }
+        if (includeAccessibilitySetup) {
+            put(AccessibilitySetupTool.toolDefinitionJson())
+        }
+        if (includeAccessibilityDisable) {
+            put(AccessibilitySetupTool.disableToolDefinitionJson())
         }
     }
 
@@ -238,7 +251,7 @@ object GroqChatRequestBuilder {
         } else {
             ""
         }
-        val chatGptAppendix = ChatGptConversationTool.systemAppendix(chatGptMode)
+        val chatGptAppendix = ChatGptConversationTool.systemAppendix(chatGptMode, harborActive = includeHarbor)
         return "$basePrompt $reminderInstructions$harborAppendix$chatGptAppendix" +
             ScreenContextPrompt.systemAppendix(screenContext?.withoutImage())
     }

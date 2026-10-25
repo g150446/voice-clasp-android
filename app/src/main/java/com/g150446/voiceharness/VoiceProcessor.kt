@@ -805,7 +805,13 @@ internal class VoiceProcessor(
     /** Tells the LLM whether it can press ChatGPT's button, or must explain the accessibility setup. */
     private fun chatGptToolMode(): ChatGptToolMode = when {
         isOpenClawRoute() -> ChatGptToolMode.OFF
-        isRingAccessibilityEnabled(appContext) -> ChatGptToolMode.ENABLED
+        isRingAccessibilityEnabled(appContext) ->
+            if (canWriteSecureSettings(appContext)) {
+                ChatGptToolMode.ENABLED_CAN_DISABLE
+            } else {
+                ChatGptToolMode.ENABLED
+            }
+        canWriteSecureSettings(appContext) -> ChatGptToolMode.CAN_ENABLE_ACCESSIBILITY
         else -> ChatGptToolMode.NEEDS_ACCESSIBILITY
     }
 
@@ -1673,15 +1679,29 @@ internal class VoiceProcessor(
                 "profile=${aiBackend.profile} Chat latency=${chatResult.latencyMs} ms tools=${chatResult.toolCalls.size}"
             )
 
+            Log.i(
+                TAG,
+                "assistant tools: mode=${BleConnectionService.interactionMode.value} " +
+                    "chatGptMode=${chatGptToolMode()} calls=${chatResult.toolCalls.map { it.name }} " +
+                    "textLen=${chatResult.text.length}",
+            )
             val reminderCall = chatResult.toolCalls.firstOrNull { it.name == "set_reminder" }
             val harborCall = chatResult.toolCalls.firstOrNull { it.name == HARBOR_COMMAND_TOOL_NAME }
             val chatGptCall = chatResult.toolCalls.firstOrNull { it.name == CHATGPT_CONVERSATION_TOOL_NAME }
+            val accessibilityCall = chatResult.toolCalls.firstOrNull { it.name == ENABLE_ACCESSIBILITY_TOOL_NAME }
+            val accessibilityOffCall = chatResult.toolCalls.firstOrNull { it.name == DISABLE_ACCESSIBILITY_TOOL_NAME }
             when {
                 reminderCall != null -> handleReminderToolCall(reminderCall.argumentsJson)
                 chatGptCall != null -> {
                     handleChatGptConversationToolCall(BleConnectionService.transcription.value)
                     BleConnectionService.setVoiceState(VoiceState.READY)
                 }
+                // Unlike ChatGPT's conversation mode (which takes the microphone), the accessibility
+                // result has to be read out: nothing else tells the user it worked.
+                accessibilityCall != null ->
+                    presentResponse(handleEnableAccessibilityToolCall(BleConnectionService.transcription.value))
+                accessibilityOffCall != null ->
+                    presentResponse(handleDisableAccessibilityToolCall(BleConnectionService.transcription.value))
                 harborCall != null && harborPaired -> {
                     val args = HarborCommandTool.parse(
                         harborCall.argumentsJson,
@@ -1844,6 +1864,12 @@ internal class VoiceProcessor(
                 return@launch
             }
             result.onSuccess { reply ->
+                Log.i(
+                    TAG,
+                    "assistant tools: mode=${BleConnectionService.interactionMode.value} " +
+                        "chatGptMode=${chatGptToolMode()} calls=${reply.toolCalls.map { it.name }} " +
+                        "textLen=${reply.text.length}",
+                )
                 val reminderCall = reply.toolCalls.firstOrNull { it.name == "set_reminder" }
                 val harborCall = reply.toolCalls.firstOrNull { it.name == HARBOR_COMMAND_TOOL_NAME }
                 if (reminderCall != null) {
@@ -1863,7 +1889,30 @@ internal class VoiceProcessor(
                     )
                     return@onSuccess
                 }
+                val accessibilityCall = reply.toolCalls.firstOrNull { it.name == ENABLE_ACCESSIBILITY_TOOL_NAME }
+                val accessibilityOffCall = reply.toolCalls.firstOrNull { it.name == DISABLE_ACCESSIBILITY_TOOL_NAME }
                 val chatGptCall = reply.toolCalls.firstOrNull { it.name == CHATGPT_CONVERSATION_TOOL_NAME }
+                if (accessibilityCall != null || accessibilityOffCall != null) {
+                    val message = if (accessibilityCall != null) {
+                        handleEnableAccessibilityToolCall(query)
+                    } else {
+                        handleDisableAccessibilityToolCall(query)
+                    }
+                    notifyAssistantUi(
+                        requestId = requestId,
+                        conversationId = conversationId,
+                        text = message,
+                        success = true,
+                        speaking = speakResponse,
+                    )
+                    presentResponse(
+                        message,
+                        requestId = requestId,
+                        origin = origin,
+                        allowPhoneAudio = speakResponse,
+                    )
+                    return@onSuccess
+                }
                 if (chatGptCall != null) {
                     val message = handleChatGptConversationToolCall(query)
                     BleConnectionService.setVoiceState(VoiceState.READY)
@@ -2080,6 +2129,49 @@ internal class VoiceProcessor(
             ChatGptConversationResult.APP_NOT_INSTALLED -> "ChatGPTアプリが見つかりません"
             ChatGptConversationResult.BUTTON_NOT_FOUND -> "ChatGPTの会話モード開始ボタンが見つかりませんでした"
             ChatGptConversationResult.FAILED -> "ChatGPTを起動できませんでした"
+        }
+        BleConnectionService.setResponse(message)
+        saveHistoryEntry(transcription = stt, response = message, isSilent = false, errorMessage = "")
+        return message
+    }
+
+    /** Switches the accessibility service on; the user repeats the button request afterwards. */
+    private suspend fun handleEnableAccessibilityToolCall(stt: String): String {
+        val result = enableRingAccessibility(appContext)
+        Log.i(TAG, "enable accessibility: $result")
+        val message = when (result) {
+            EnableAccessibilityResult.ALREADY_ENABLED -> "ユーザー補助はすでに有効です"
+            EnableAccessibilityResult.NO_PERMISSION ->
+                "ユーザー補助を自動で有効にできません。設定から有効にしてください"
+            EnableAccessibilityResult.FAILED -> "ユーザー補助を有効にできませんでした"
+            EnableAccessibilityResult.ENABLED -> {
+                var waitedMs = 0L
+                while (!ChatGptConversationController.isAvailable() && waitedMs < 3_000L) {
+                    delay(200L)
+                    waitedMs += 200L
+                }
+                if (ChatGptConversationController.isAvailable()) {
+                    "ユーザー補助を有効にしました。もう一度ご依頼ください"
+                } else {
+                    "ユーザー補助を有効にしました。接続に少し時間がかかります。しばらくしてからもう一度ご依頼ください"
+                }
+            }
+        }
+        BleConnectionService.setResponse(message)
+        saveHistoryEntry(transcription = stt, response = message, isSilent = false, errorMessage = "")
+        return message
+    }
+
+    /** Switches the accessibility service off; ChatGPT / Kindle button operations stop until re-enabled. */
+    private fun handleDisableAccessibilityToolCall(stt: String): String {
+        val result = disableRingAccessibility(appContext)
+        Log.i(TAG, "disable accessibility: $result")
+        val message = when (result) {
+            DisableAccessibilityResult.DISABLED -> "ユーザー補助を無効にしました"
+            DisableAccessibilityResult.ALREADY_DISABLED -> "ユーザー補助はすでに無効です"
+            DisableAccessibilityResult.NO_PERMISSION ->
+                "ユーザー補助を自動で無効にできません。設定から無効にしてください"
+            DisableAccessibilityResult.FAILED -> "ユーザー補助を無効にできませんでした"
         }
         BleConnectionService.setResponse(message)
         saveHistoryEntry(transcription = stt, response = message, isSilent = false, errorMessage = "")

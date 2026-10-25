@@ -33,6 +33,7 @@ Android アプリ。XIAO nRF52840 Sense をウェアラブルマイクとして�
 [リーダーモード]
   ・G2 プラグイン接続中のみ ON 可。切断で自動 OFF。切替は G2 に表示
   ・ホームのユーザー補助（Accessibility）必須（Kindle 自動／ページめくり）
+  ・音声で有効化するには一度だけ `adb shell pm grant com.g150446.voiceharness android.permission.WRITE_SECURE_SETTINGS` を実行（以後「ユーザー補助を有効にして」でLLMが有効化）
   ・G2 プラグインが実表示幅と句読点で本文を分割、Node シングルタップで送り
   ・次のG2画面に本文が足りない場合はKindleを自動でめくり、次ページ本文を結合
   ・読書中にKindleの実ページを最大3ページ先までめくってLLMで本文を先読みし、タップ時は変換済み本文をすぐ表示

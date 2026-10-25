@@ -66,4 +66,89 @@ class ChatGptConversationTest {
         assertTrue(body(ChatGptToolMode.ENABLED).contains("\"name\":\"$CHATGPT_CONVERSATION_TOOL_NAME\""))
         assertFalse(body(ChatGptToolMode.NEEDS_ACCESSIBILITY).contains("\"name\":\"$CHATGPT_CONVERSATION_TOOL_NAME\""))
     }
+
+    @Test
+    fun accessibilityServiceIsAppendedWithoutDuplicates() {
+        val component = "com.g150446.voiceharness/com.g150446.voiceharness.RingAccessibilityService"
+        assertEquals(component, addAccessibilityServiceToSetting(null, component))
+        assertEquals(component, addAccessibilityServiceToSetting("  ", component))
+        assertEquals("a/b:$component", addAccessibilityServiceToSetting("a/b", component))
+        assertEquals(component, addAccessibilityServiceToSetting(component, component))
+    }
+
+    @Test
+    fun accessibilitySetupToolIsOfferedOnlyWhenItCanBeEnabled() {
+        fun toolNames(mode: ChatGptToolMode): List<String> {
+            val body = GroqChatRequestBuilder.buildRequestBodyWithFunctionCalling(
+                conversationHistory = emptyList(),
+                languageCode = "ja",
+                chatGptToolMode = mode,
+            )
+            val tools = org.json.JSONObject(body).getJSONArray("tools")
+            return (0 until tools.length()).map {
+                tools.getJSONObject(it).getJSONObject("function").getString("name")
+            }
+        }
+        val can = toolNames(ChatGptToolMode.CAN_ENABLE_ACCESSIBILITY)
+        assertTrue(ENABLE_ACCESSIBILITY_TOOL_NAME in can)
+        assertFalse(CHATGPT_CONVERSATION_TOOL_NAME in can)
+        for (mode in listOf(ChatGptToolMode.OFF, ChatGptToolMode.NEEDS_ACCESSIBILITY)) {
+            assertFalse(ENABLE_ACCESSIBILITY_TOOL_NAME in toolNames(mode))
+        }
+        val enabled = toolNames(ChatGptToolMode.ENABLED)
+        assertTrue(CHATGPT_CONVERSATION_TOOL_NAME in enabled)
+        assertFalse(ENABLE_ACCESSIBILITY_TOOL_NAME in enabled)
+    }
+
+    @Test
+    fun harborKeepsUnqualifiedPhoneRequestsButAllowsExplicitOnes() {
+        fun prompt(harbor: Boolean) = GroqChatRequestBuilder.buildSystemPromptForOpenRouter(
+            languageCode = "ja",
+            currentTimeMillis = 0L,
+            screenContext = null,
+            includeHarbor = harbor,
+            chatGptMode = ChatGptToolMode.CAN_ENABLE_ACCESSIBILITY,
+        )
+        val withHarbor = prompt(true)
+        assertTrue(withHarbor.contains("Terminal Harbor is active, so a request without a stated target"))
+        assertTrue(withHarbor.indexOf("harbor_command") < withHarbor.indexOf(ENABLE_ACCESSIBILITY_TOOL_NAME))
+        assertFalse(prompt(false).contains("Terminal Harbor is active"))
+        assertTrue(prompt(false).contains(ENABLE_ACCESSIBILITY_TOOL_NAME))
+    }
+
+    @Test
+    fun accessibilityServiceIsRemovedFromTheSetting() {
+        val component = "com.g150446.voiceharness/com.g150446.voiceharness.RingAccessibilityService"
+        assertEquals("", removeAccessibilityServiceFromSetting(null, component))
+        assertEquals("", removeAccessibilityServiceFromSetting(component, component))
+        assertEquals("a/b", removeAccessibilityServiceFromSetting("a/b:$component", component))
+        assertEquals("a/b:c/d", removeAccessibilityServiceFromSetting("a/b:$component:c/d", component))
+        assertEquals("a/b", removeAccessibilityServiceFromSetting("a/b", component))
+    }
+
+    @Test
+    fun disableToolIsOfferedOnlyWhenEnabledAndPermitted() {
+        fun names(mode: ChatGptToolMode): List<String> {
+            val body = GroqChatRequestBuilder.buildRequestBodyWithFunctionCalling(
+                conversationHistory = emptyList(),
+                languageCode = "ja",
+                chatGptToolMode = mode,
+            )
+            val tools = org.json.JSONObject(body).getJSONArray("tools")
+            return (0 until tools.length()).map {
+                tools.getJSONObject(it).getJSONObject("function").getString("name")
+            }
+        }
+        val can = names(ChatGptToolMode.ENABLED_CAN_DISABLE)
+        assertTrue(DISABLE_ACCESSIBILITY_TOOL_NAME in can)
+        assertTrue(CHATGPT_CONVERSATION_TOOL_NAME in can)
+        for (mode in listOf(
+            ChatGptToolMode.ENABLED,
+            ChatGptToolMode.OFF,
+            ChatGptToolMode.NEEDS_ACCESSIBILITY,
+            ChatGptToolMode.CAN_ENABLE_ACCESSIBILITY,
+        )) {
+            assertFalse(DISABLE_ACCESSIBILITY_TOOL_NAME in names(mode))
+        }
+    }
 }

@@ -68,7 +68,10 @@ internal object ChatGptConversationController {
 
     fun isAvailable(): Boolean = service != null
 
-    suspend fun start(context: Context): ChatGptConversationResult {
+    suspend fun start(context: Context): ChatGptConversationResult =
+        startInternal(context).also { android.util.Log.i("ChatGptConversation", "start: $it") }
+
+    private suspend fun startInternal(context: Context): ChatGptConversationResult {
         val current = service ?: return ChatGptConversationResult.UNAVAILABLE
         val launch = context.packageManager.getLaunchIntentForPackage(CHATGPT_PACKAGE)
             ?: return ChatGptConversationResult.APP_NOT_INSTALLED

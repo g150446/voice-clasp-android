@@ -42,7 +42,16 @@ data class ScreenContext(
 }
 
 /** Whether the LLM may press buttons in the ChatGPT app, which needs the accessibility service. */
-enum class ChatGptToolMode { OFF, ENABLED, NEEDS_ACCESSIBILITY }
+enum class ChatGptToolMode {
+    OFF,
+    ENABLED,
+    /** Like ENABLED, and the app may also switch accessibility off: expose disable_accessibility_service. */
+    ENABLED_CAN_DISABLE,
+    /** Accessibility is off and cannot be switched on by the app: the LLM explains the manual setup. */
+    NEEDS_ACCESSIBILITY,
+    /** Accessibility is off but the app may switch it on: expose enable_accessibility_service. */
+    CAN_ENABLE_ACCESSIBILITY,
+}
 
 data class ChatRequest(
     val conversationHistory: List<ConversationTurn>,

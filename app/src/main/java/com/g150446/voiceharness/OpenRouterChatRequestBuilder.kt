@@ -21,7 +21,13 @@ object OpenRouterChatRequestBuilder {
         val includeHarbor = supportsTools && (harborToolEnabled || forceHarborCommand)
         val harborOnly = supportsTools && forceHarborCommand
         val chatGptMode = if (forceHarborCommand) ChatGptToolMode.OFF else chatGptToolMode
-        val includeChatGpt = supportsTools && chatGptMode == ChatGptToolMode.ENABLED
+        val includeChatGpt = supportsTools && (
+            chatGptMode == ChatGptToolMode.ENABLED || chatGptMode == ChatGptToolMode.ENABLED_CAN_DISABLE
+            )
+        val includeAccessibilityDisable =
+            supportsTools && chatGptMode == ChatGptToolMode.ENABLED_CAN_DISABLE
+        val includeAccessibilitySetup =
+            supportsTools && chatGptMode == ChatGptToolMode.CAN_ENABLE_ACCESSIBILITY
         val systemPrompt = GroqChatRequestBuilder.buildSystemPromptForOpenRouter(
             languageCode = languageCode,
             currentTimeMillis = currentTimeMillis,
@@ -60,6 +66,8 @@ object OpenRouterChatRequestBuilder {
                         includeHarbor = includeHarbor,
                         harborOnly = harborOnly,
                         includeChatGpt = includeChatGpt,
+                        includeAccessibilitySetup = includeAccessibilitySetup,
+                        includeAccessibilityDisable = includeAccessibilityDisable,
                     ),
                 )
                 if (forceHarborCommand) {
