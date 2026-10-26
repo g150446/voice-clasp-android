@@ -192,15 +192,22 @@ class BleManager(
         val BATTERY_SERVICE_UUID: UUID = UUID.fromString("0000180F-0000-1000-8000-00805f9b34fb")
         val BATTERY_LEVEL_CHAR_UUID: UUID = UUID.fromString("00002A19-0000-1000-8000-00805f9b34fb")
         const val SCAN_TIMEOUT_MS = 30_000L
-        /** Exact XIAO name; Echo advertises `HarnessNode-Echo` (prefix match). */
-        const val DEVICE_NAME = "HarnessNode"
+        /**
+         * Node advertised name. Firmware moves from [LEGACY_DEVICE_NAME] to [DEVICE_NAME] over
+         * an OTA, so both are accepted (and prefix-matched for variants such as `ClaspNode-Plus2`)
+         * until every node has been updated.
+         */
+        const val DEVICE_NAME = "ClaspNode"
+        const val LEGACY_DEVICE_NAME = "HarnessNode"
+        private val NODE_NAMES = listOf(DEVICE_NAME, LEGACY_DEVICE_NAME)
 
-        fun isHarnessNodeName(name: String): Boolean =
-            name == DEVICE_NAME || name.startsWith("$DEVICE_NAME-")
+        fun isNodeName(name: String): Boolean =
+            NODE_NAMES.any { base -> name == base || name.startsWith("$base-") }
 
         /**
          * Whether a scan hit should satisfy an auto-reconnect target.
-         * Exact MAC wins; otherwise a HarnessNode name match covers RPA rotation.
+         * Exact MAC wins; otherwise a node name match (old or new) covers RPA rotation and a node
+         * whose advertised name changed across a firmware update.
          */
         fun matchesReconnectTarget(
             resultAddress: String,
@@ -212,12 +219,11 @@ class BleManager(
                 return true
             }
             if (targetAddress == null) return false
-            if (!isHarnessNodeName(resultName)) return false
+            if (!isNodeName(resultName)) return false
             val preferred = preferredName?.trim().orEmpty()
             return preferred.isEmpty() ||
                 preferred == resultName ||
-                isHarnessNodeName(preferred) ||
-                preferred == DEVICE_NAME
+                isNodeName(preferred)
         }
     }
 
@@ -446,7 +452,7 @@ class BleManager(
             val uuids = result.scanRecord?.serviceUuids
             val deviceName = result.device.name ?: result.scanRecord?.deviceName ?: ""
             val hasServiceUuid = uuids != null && uuids.contains(ParcelUuid(SERVICE_UUID))
-            val hasDeviceName = isHarnessNodeName(deviceName)
+            val hasDeviceName = isNodeName(deviceName)
 
             Log.v(TAG, "Scan result: addr=${result.device.address} name=$deviceName uuid=$hasServiceUuid")
 
@@ -454,7 +460,7 @@ class BleManager(
             // background scans where scan responses may not be received).
             if (!hasServiceUuid && !hasDeviceName) return
 
-            Log.d(TAG, "HarnessNode found: addr=${result.device.address} name=$deviceName uuid=$hasServiceUuid")
+            Log.d(TAG, "Node found: addr=${result.device.address} name=$deviceName uuid=$hasServiceUuid")
             updateScannedDevice(result)
             val targetAddress = pendingTargetAddress
             val preferred = _preferredDevice.value

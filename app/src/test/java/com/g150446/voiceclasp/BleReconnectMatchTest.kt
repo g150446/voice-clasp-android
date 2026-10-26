@@ -73,4 +73,48 @@ class BleReconnectMatchTest {
             ),
         )
     }
+
+    @Test
+    fun `node renamed by firmware update still matches the old preferred name on a new MAC`() {
+        // Same band, advertised name moved HarnessNode -> ClaspNode over an OTA.
+        assertTrue(
+            matchesReconnectTarget(
+                resultAddress = "AA:BB:CC:DD:EE:FF",
+                resultName = "ClaspNode",
+                targetAddress = "CF:78:E0:AC:05:04",
+                preferredName = "HarnessNode",
+            ),
+        )
+        assertTrue(
+            matchesReconnectTarget(
+                resultAddress = "AA:BB:CC:DD:EE:FF",
+                resultName = "HarnessNode",
+                targetAddress = "CF:78:E0:AC:05:04",
+                preferredName = "ClaspNode",
+            ),
+        )
+    }
+
+    @Test
+    fun `exact MAC still wins whatever the advertised name is`() {
+        assertTrue(
+            matchesReconnectTarget(
+                resultAddress = "CF:78:E0:AC:05:04",
+                resultName = "ClaspNode",
+                targetAddress = "CF:78:E0:AC:05:04",
+                preferredName = "HarnessNode",
+            ),
+        )
+    }
+
+    @Test
+    fun `node names accept both brands and their suffixed variants only`() {
+        assertTrue(BleManager.isNodeName("ClaspNode"))
+        assertTrue(BleManager.isNodeName("HarnessNode"))
+        assertTrue(BleManager.isNodeName("ClaspNode-Plus2"))
+        assertTrue(BleManager.isNodeName("HarnessNode-Echo"))
+        assertFalse(BleManager.isNodeName("ClaspNodeX"))
+        assertFalse(BleManager.isNodeName("Even G2"))
+        assertFalse(BleManager.isNodeName(""))
+    }
 }
