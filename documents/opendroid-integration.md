@@ -1,6 +1,6 @@
 # OpenDroid integration
 
-Voice Harness remains the product repository, package identity, and application shell. OpenDroid
+Voice Clasp remains the product repository, package identity, and application shell. OpenDroid
 concepts are integrated behind narrow interfaces instead of merging the unrelated repositories or
 shipping two application modules.
 
@@ -41,12 +41,12 @@ model lifecycle, response state, and TTS engine.
 
 ## Implementation plan (canonical)
 
-See [`voice-harness-android-openrouter-plan.md`](./voice-harness-android-openrouter-plan.md).
+See [`voice-clasp-android-openrouter-plan.md`](./voice-clasp-android-openrouter-plan.md).
 
 ## Source policy
 
-- Repository and application ID remain `voice-harness-android` and
-  `com.g150446.voiceharness`.
+- Repository and application ID remain `voice-clasp-android` and
+  `com.g150446.voiceclasp`.
 - OpenDroid is a reference implementation, not a Git submodule or a second `:app` module.
 - Preserve the existing Harness UI, BLE protocol, and upgrade path.
 
@@ -65,7 +65,7 @@ See [`voice-harness-android-openrouter-plan.md`](./voice-harness-android-openrou
 
 Validated on a Motorola razr 50s running Android 16 / API 36:
 
-- Android accepted Voice Harness as `ROLE_ASSISTANT` and bound its interaction and recognition services.
+- Android accepted Voice Clasp as `ROLE_ASSISTANT` and bound its interaction and recognition services.
 - Keyguard launch capability was reported as enabled after reloading the role metadata.
 - In forced deep idle, HarnessNode remained connected and delivered recording events and PCM.
 - The utterance "入力テスト" completed Groq Whisper, chat, and local Android TTS in 1.856 seconds.

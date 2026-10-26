@@ -75,7 +75,7 @@ G2 に Kindle の本文が出ない。ヘッドレス取得の最後の成功は
 
 ```bash
 ./scripts/adb-tailscale.sh connect
-adb -s 100.102.210.64:5555 logcat -v time --pid=$(adb -s 100.102.210.64:5555 shell pidof com.g150446.voiceharness)
+adb -s 100.102.210.64:5555 logcat -v time --pid=$(adb -s 100.102.210.64:5555 shell pidof com.g150446.voiceclasp)
 ```
 
 - `Ineligible:` … 自動開始が止まっている条件

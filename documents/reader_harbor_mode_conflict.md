@@ -40,7 +40,7 @@ ONにしたはずのリーダーモードが即座にOFFへ戻される。Kindle
 `syncInteractionModeWithG2Client()` の復元条件に `!_readingPassthroughEnabled.value`
 を追加し、リーダーモードが有効な間はHarborモードへの自動復元を止めた。
 
-**変更先**: `app/src/main/java/com/g150446/voiceharness/BleConnectionService.kt`
+**変更先**: `app/src/main/java/com/g150446/voiceclasp/BleConnectionService.kt`
 （`syncInteractionModeWithG2Client()`）
 
 根本的には「操作モードの状態」が `InteractionModePreferences`（永続）、

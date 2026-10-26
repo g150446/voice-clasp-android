@@ -298,5 +298,5 @@ Z100 表示仕様そのものは [`smart_glasses_output.md`](smart_glasses_outpu
 
 対応版:
 
-- Android (`voice-harness-android`): `5e0695c`（BLE信頼性）+ 本変更の Z100 出力 / 共存対策
+- Android (`voice-clasp-android`): `5e0695c`（BLE信頼性）+ 本変更の Z100 出力 / 共存対策
 - Firmware (`harness-node`): `44d3590`（Notify送達）+ `e7fd558` / `0.0.22`（ジェスチャー更新と音声経路分離）

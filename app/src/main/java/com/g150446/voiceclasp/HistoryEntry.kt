@@ -1,0 +1,55 @@
+package com.g150446.voiceclasp
+
+/** Human verdict on whether the recording gesture was meant. */
+enum class GestureLabel {
+    /** The user performed the gesture on purpose. */
+    INTENTIONAL,
+
+    /** The node fired on everyday arm motion. */
+    ACCIDENTAL,
+    ;
+
+    companion object {
+        fun fromStorage(value: String?): GestureLabel? =
+            entries.firstOrNull { it.name == value }
+    }
+}
+
+data class HistoryEntry(
+    val id: String,
+    val timestamp: Long,
+    val transcription: String,
+    val response: String,
+    val isSilent: Boolean,
+    val errorMessage: String,
+    /** Gesture milestones for this recording session (measured values from FW). */
+    val gestureDiags: List<GestureDiagEntry> = emptyList(),
+    /**
+     * True when [gestureDiags] came from the node's own 0x33-0x35 batch, whose
+     * `tMs` shares an origin with [trajectoryFile]. False means they were sliced
+     * from live 0x30 events on the phone's clock, which BLE jitter puts a few tens
+     * of milliseconds off — fine to read, not safe to align samples against.
+     */
+    val diagsFromNodeBatch: Boolean = false,
+    /**
+     * File name under [GestureTrajectoryStore.DIR_NAME] holding the 6-axis IMU
+     * trajectory for this attempt, or null when capture was off. The samples
+     * themselves stay out of SharedPreferences: ~30 KB each would not survive
+     * a 100-entry history.
+     */
+    val trajectoryFile: String? = null,
+    /** Training label, set by hand from the history screen. */
+    val gestureLabel: GestureLabel? = null,
+    /** AI / READER / HARBOR at the time of this entry (empty on older entries). */
+    val interactionMode: String = "",
+    /** Whether the Even G2 plugin was polling when this entry was written. */
+    val g2ClientActive: Boolean = false,
+    /** ASR backend id (e.g. GROQ). Empty on older entries. */
+    val sttBackend: String = "",
+    /** Concrete ASR model id or local file name. */
+    val sttModel: String = "",
+    /** LLM backend id (e.g. OPENROUTER). Empty on older entries. */
+    val llmBackend: String = "",
+    /** Concrete LLM model id or local file name. */
+    val llmModel: String = "",
+)

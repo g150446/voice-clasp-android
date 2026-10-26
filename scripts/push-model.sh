@@ -13,7 +13,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 MODEL_SRC="${1:-$ROOT_DIR/models/gemma-4-E2B-it.litertlm}"
 DEST_NAME="${2:-$(basename "$MODEL_SRC")}"
-PKG="com.g150446.voiceharness"
+PKG="com.g150446.voiceclasp"
 CHUNK_BYTES=$((128 * 1024 * 1024))
 
 if [[ ! -f "$MODEL_SRC" ]]; then

@@ -20,5 +20,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "VoiceHarnessAndroid"
+rootProject.name = "VoiceClaspAndroid"
 include(":app")

@@ -1,7 +1,7 @@
 # Gemma 4 E2B MTP 有効化状況
 
 > 調査日: 2026-08-17 / 有効化: 2026-08-17 / 設定画面トグル: 2026-08-18
-> 対象: Voice Harness Android / Gemma 4 E2B / LiteRT-LM 0.14.0
+> 対象: Voice Clasp Android / Gemma 4 E2B / LiteRT-LM 0.14.0
 
 ## 結論
 
@@ -124,11 +124,11 @@ Engine initialized backend=GPU mtp=true /data/.../models/gemma-4-E2B-it.litertlm
 
 ### 関連コード
 
-- `app/src/main/java/com/g150446/voiceharness/LitertLlmSupport.kt`
-- `app/src/main/java/com/g150446/voiceharness/GemmaOnDeviceBackend.kt`
-- `app/src/main/java/com/g150446/voiceharness/ModelManager.kt`（prefs / `speculativeDecodingActive`）
-- `app/src/main/java/com/g150446/voiceharness/GroqSettingsActivity.kt`（トグルと表示）
-- `app/src/main/java/com/g150446/voiceharness/BleConnectionService.kt`（`reloadOnDeviceBackend`）
+- `app/src/main/java/com/g150446/voiceclasp/LitertLlmSupport.kt`
+- `app/src/main/java/com/g150446/voiceclasp/GemmaOnDeviceBackend.kt`
+- `app/src/main/java/com/g150446/voiceclasp/ModelManager.kt`（prefs / `speculativeDecodingActive`）
+- `app/src/main/java/com/g150446/voiceclasp/GroqSettingsActivity.kt`（トグルと表示）
+- `app/src/main/java/com/g150446/voiceclasp/BleConnectionService.kt`（`reloadOnDeviceBackend`）
 - `app/build.gradle.kts`
 
 ## 参考資料

@@ -18,8 +18,8 @@ HF: `litert-community/gemma-4-E2B-it-litert-lm`（約 2.5GB）
 
 ```bash
 # 例: 端末のアプリ filesDir へ push
-adb shell mkdir -p /data/data/com.g150446.voiceharness/files/models
-adb push gemma-4-E2B-it.litertlm /data/data/com.g150446.voiceharness/files/models/
+adb shell mkdir -p /data/data/com.g150446.voiceclasp/files/models
+adb push gemma-4-E2B-it.litertlm /data/data/com.g150446.voiceclasp/files/models/
 ```
 
 またはモデル設定画面のファイル選択から取り込む。

@@ -100,7 +100,7 @@ hex ダンプログには出るが、それだけ。
   不一致中は「Node: 運転 / Node: 通常」を警告色で併記。未確認・一致時は従来の表示のまま。
 - `BleOperationModeAckTest.kt` を追加（`BleDoubleTapTest` と同じ素の JUnit）。
 
-**変更先**: `app/src/main/java/com/g150446/voiceharness/BleManager.kt`、
+**変更先**: `app/src/main/java/com/g150446/voiceclasp/BleManager.kt`、
 `BleConnectionService.kt`、`VoiceViewModel.kt`、`MainActivity.kt`、
 `harness-node/nordic-main/src/main.c`
 

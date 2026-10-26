@@ -54,4 +54,4 @@ API キー、要求本文、画面 JPEG はログに出さない。
 
 ## 実装計画
 
-詳細仕様は [`voice-harness-android-openrouter-plan.md`](./voice-harness-android-openrouter-plan.md) を正本とする。
+詳細仕様は [`voice-clasp-android-openrouter-plan.md`](./voice-clasp-android-openrouter-plan.md) を正本とする。

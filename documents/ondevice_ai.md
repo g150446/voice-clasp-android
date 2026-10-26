@@ -24,7 +24,7 @@ TTS は Android `TextToSpeech`（または Even Realities G2 表示）。
 - OpenRouter: [`openrouter.md`](openrouter.md)
 - OpenClaw: [`openclaw.md`](openclaw.md)
 - デジタルアシスタント: [`opendroid-integration.md`](opendroid-integration.md)
-- 実装計画: [`voice-harness-android-openrouter-plan.md`](voice-harness-android-openrouter-plan.md)
+- 実装計画: [`voice-clasp-android-openrouter-plan.md`](voice-clasp-android-openrouter-plan.md)
 - Qwen ASR + LFM 検証: [`lfm25_qwen_asr_validation.md`](lfm25_qwen_asr_validation.md)
 
 ## 必須モデル（ローカルのみ）

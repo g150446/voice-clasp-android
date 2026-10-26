@@ -1,4 +1,4 @@
-# Voice Harness
+# Voice Clasp
 
 Android アプリ。XIAO nRF52840 Sense をウェアラブルマイクとして使い、オンデバイス / Groq / OpenRouter で音声認識・AI応答を行い、Android TTS（または Even Realities G2）で出力する。電源長押しのデジタルアシスタント（下部シート UI）にも対応する。
 
@@ -33,7 +33,7 @@ Android アプリ。XIAO nRF52840 Sense をウェアラブルマイクとして�
 [リーダーモード]
   ・G2 プラグイン接続中のみ ON 可。切断で自動 OFF。切替は G2 に表示
   ・ホームのユーザー補助（Accessibility）必須（Kindle 自動／ページめくり）
-  ・音声で有効化するには一度だけ `adb shell pm grant com.g150446.voiceharness android.permission.WRITE_SECURE_SETTINGS` を実行（以後「ユーザー補助を有効にして」でLLMが有効化）
+  ・音声で有効化するには一度だけ `adb shell pm grant com.g150446.voiceclasp android.permission.WRITE_SECURE_SETTINGS` を実行（以後「ユーザー補助を有効にして」でLLMが有効化）
   ・G2 プラグインが実表示幅と句読点で本文を分割、Node シングルタップで送り
   ・次のG2画面に本文が足りない場合はKindleを自動でめくり、次ページ本文を結合
   ・読書中にKindleの実ページを最大3ページ先までめくってLLMで本文を先読みし、タップ時は変換済み本文をすぐ表示
@@ -78,14 +78,14 @@ OpenRouter は明示オプトイン（API キー + モデル選択が必須）�
 - XIAO nRF52840 Sense（`harness-node/nordic-main` ファームウェア書き込み済み）
 - ローカル利用時: Qwen / Gemma / LFM のオンデバイスモデル（詳細は下記ドキュメント参照）
 - クラウド利用時: Groq API キー、および/または OpenRouter API キー（モデルファイル不要）
-- デジタルアシスタント利用時: 設定アプリで Voice Harness をデフォルトのデジタルアシスタントに指定
+- デジタルアシスタント利用時: 設定アプリで Voice Clasp をデフォルトのデジタルアシスタントに指定
 - （任意）Even Realities G2とEven Realities App、Even Hubプラグイン（AI返答をグラスへ表示する場合）
 
 ### アプリのインストール
 
 ```bash
-git clone https://github.com/g150446/voice-harness-android.git
-cd voice-harness-android
+git clone https://github.com/g150446/voice-clasp-android.git
+cd voice-clasp-android
 ./scripts/prepare-qwen-asr-native.sh
 # Large debug APK: prefer USB (Tailscale install often times out and leaves a stale process)
 ./scripts/install-usb.sh
@@ -105,7 +105,7 @@ Tailscale は **logcat / 小ファイル向け**。APK インストールは USB
    - **ローカル**: `models/` を配置し `./scripts/push-all-models.sh`、または画面から取り込み → モデルを読み込む
    - **Cloud (Groq)**: API キーを入力して保存
    - **OpenRouter（LLM のみ）**: API キー保存 → モデル一覧更新 → モデルを明示選択
-3. （推奨）デジタルアシスタント: システム設定で Voice Harness をアシスタントに設定
+3. （推奨）デジタルアシスタント: システム設定で Voice Clasp をアシスタントに設定
    - 電源長押しで下部シート
    - HarnessNode ジェスチャー時の **画面テキスト／スクショ自動添付** にも必要
 4. （推奨）**録音中アイコンの表示を許可**（他のアプリの上に表示）
@@ -167,7 +167,7 @@ G2側にトグルしたままプラグインのポーリングが途絶える（
 使う場合は手動で切り替える。
 
 G2を利用する前にEven Realities Appでグラスをペアリングし、EvenHubからインストールした
-**Voice Harness**プラグインを起動する。アプリ内の **Even Realities Appを開く** ボタンから
+**Voice Clasp**プラグインを起動する。アプリ内の **Even Realities Appを開く** ボタンから
 コンパニオンを起動できる。インストール後の通常利用にMacや開発サーバーは不要。
 
 QR/URLと`npm run dev`はプラグイン開発時だけ使用する。配布パッケージの作成・非公開登録と
@@ -211,7 +211,7 @@ Pilot では「Chromeブラウザを開いて」「グロックを起動して�
 履歴には操作モード・G2接続有無・ASR/LLM モデルが残る。
 
 Harborモードを初めて使う場合は、Terminal Harborのサイドバーで **Pair mobile** を開き、
-Voice HarnessのTerminal Harbor欄からQRを読み取る。QRを使えない場合はPair URIを手入力できる。
+Voice ClaspのTerminal Harbor欄からQRを読み取る。QRを使えない場合はPair URIを手入力できる。
 ペアリング情報はAndroid Keystoreで暗号化され、Pair URI、認証鍵、端末本文はログや履歴へ保存しない。
 ブリッジはTailscaleまたは信頼できるLAN上のHTTPを使用し、HMACで相互認証と改ざん検出を行う。
 ホームの **Terminal Harborを開く** から、ペア済みMacとworkspaceの選択、workspace/tabの作成・終了、
@@ -238,7 +238,7 @@ terminal出力の文字サイズはヘッダのA−/A+で変更でき（8〜24sp
 どちらも端末画面から拾うのではなくファイルを読む。Claude Code 側に
 `wezterm agent-session install-hooks --agent claude --apply` で hook を入れておく必要があり
 （Codex は不要）、取得できない場合は理由を表示する（端末出力で代用はしない）。
-旧Terminal Harbor Mobile Android版の認証情報はアプリ間で移送せず、Voice Harnessから再ペアリングする。
+旧Terminal Harbor Mobile Android版の認証情報はアプリ間で移送せず、Voice Claspから再ペアリングする。
 
 HarborモードはG2未接続でも有効にできる。HarnessNodeのダブルタップで指示録音を開始・終了し、
 解釈後はシングルタップで実行、ダブルタップで取り消す。同じ操作はホームとworkspace画面の
@@ -320,7 +320,7 @@ mDNS はリンクローカルなので tailnet は越えない。**同じ Wi-Fi 
 
 `connect` は **USB なしで**次の順に試す:
 
-1. 前回成功した IP（`~/.cache/voice-harness/adb-wireless.host`）
+1. 前回成功した IP（`~/.cache/voice-clasp/adb-wireless.host`）
 2. Mac のデフォルトゲートウェイ — 端末のテザリングに Mac が繋がっている場合はこれが端末 IP
 3. 端末の Tailscale IP
 
@@ -385,7 +385,7 @@ mDNS はリンクローカルなので tailnet は越えない。**同じ Wi-Fi 
 - [`documents/harbor_confirm_voice_intent.md`](documents/harbor_confirm_voice_intent.md) — Harbor 確認画面のタップ割り当てと意図解析を1回にした経緯
 - [`documents/harbor_mode_switch.md`](documents/harbor_mode_switch.md) — Claude Code のモード切替で ⇧Tab の回数を数えるのをやめ、画面を読みながら送るようにした経緯
 - [`documents/reader_harbor_mode_conflict.md`](documents/reader_harbor_mode_conflict.md) — リーダーモードがHarborモードに引き戻される回帰の原因と修正
-- [`even-g2/app/README.md`](even-g2/app/README.md) — Even Hub プラグイン（Voice Harness G2）
+- [`even-g2/app/README.md`](even-g2/app/README.md) — Even Hub プラグイン（Voice Clasp G2）
 - [`documents/even_g2_macless_deployment.md`](documents/even_g2_macless_deployment.md) — Macなし運用、非公開Beta配布、期限切れ表示の復旧
 - [`documents/vad.md`](documents/vad.md) — Silero VAD / FFT フォールバックの仕様とチューニング
 - [`documents/architecture.md`](documents/architecture.md) — アーキテクチャ詳細
@@ -393,6 +393,6 @@ mDNS はリンクローカルなので tailnet は越えない。**同じ Wi-Fi 
 - [`documents/groq_cloud.md`](documents/groq_cloud.md) — Cloud (Groq)
 - [`documents/openrouter.md`](documents/openrouter.md) — OpenRouter LLM
 - [`documents/opendroid-integration.md`](documents/opendroid-integration.md) — デジタルアシスタント統合
-- [`documents/voice-harness-android-openrouter-plan.md`](documents/voice-harness-android-openrouter-plan.md) — OpenRouter・画面コンテキスト・対話 UI 実装計画（正本）
+- [`documents/voice-clasp-android-openrouter-plan.md`](documents/voice-clasp-android-openrouter-plan.md) — OpenRouter・画面コンテキスト・対話 UI 実装計画（正本）
 - [`documents/ondevice_gemma.md`](documents/ondevice_gemma.md) — Gemma 4 統合メモ
 - [`documents/qwen_asr_encoder_issue.md`](documents/qwen_asr_encoder_issue.md) — Qwen3-ASR方式の調査・端末検証結果

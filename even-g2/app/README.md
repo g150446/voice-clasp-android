@@ -1,14 +1,14 @@
-# Voice Harness — Even G2
+# Voice Clasp — Even G2
 
-Even Realitiesの公式Even Hub SDKを使った、Voice Harness 公式の G2 表示プラグインです。
+Even Realitiesの公式Even Hub SDKを使った、Voice Clasp 公式の G2 表示プラグインです。
 
-Even Hub 上の表示名は **Voice Harness**（`package_id`: `com.g150446.voiceharness.g2`）です。
-以前の `hello-world` / `com.g150446.voiceharness.g2hello` を入れている場合は別アプリ扱いになるため、旧パッケージを削除してから入れ直してください。
+Even Hub 上の表示名は **Voice Clasp**（`package_id`: `com.g150446.voiceclasp.g2`）です。
+以前の `hello-world` / `com.g150446.voiceclasp.g2hello` を入れている場合は別アプリ扱いになるため、旧パッケージを削除してから入れ直してください。
 
 G2には次を表示します。
 
 - AI返答（ホームの「AI返答の出力先」で G2 を選択時）
-- AndroidのVoice Harnessで抽出したKindle本文（リーダーモード）
+- AndroidのVoice Claspで抽出したKindle本文（リーダーモード）
 - Harness Nodeの**シングルタップ**でG2本文を次ページへ進める（リーダー／Harbor要約モード）
 - G2のスワイプ上下で本文ページを前後移動
 - G2のダブルタップでEven Hubの終了確認を表示
@@ -20,19 +20,19 @@ G2には次を表示します。
 ## 必要条件
 
 - Even G2とEven Realities Appをペアリングし、ファームウェアを更新済み
-- EvenHubから**Voice Harness**プラグインをEven Realities Appへインストール済み
-- Voice Harness Androidアプリが同じ端末で起動していること
+- EvenHubから**Voice Clasp**プラグインをEven Realities Appへインストール済み
+- Voice Clasp Androidアプリが同じ端末で起動していること
 
 インストール後の通常利用にMac、Node.js、Viteサーバー、QR/URLプロトタイプは不要。
-G2プラグインは同じAndroid端末のVoice Harnessだけと通信する。
+G2プラグインは同じAndroid端末のVoice Claspだけと通信する。
 
 ## 通常利用（Mac不要）
 
-1. AndroidのVoice Harnessを起動する。
-2. **Even Realities Appを開く**を押し、Even Hubの**Voice Harness**を起動する。
+1. AndroidのVoice Claspを起動する。
+2. **Even Realities Appを開く**を押し、Even Hubの**Voice Clasp**を起動する。
 3. AI返答の出力先をG2にするか、読書パススルーをONにする。
 
-Android端末を再起動した場合、Voice Harnessのバックグラウンドサービスは自動復帰する。
+Android端末を再起動した場合、Voice Claspのバックグラウンドサービスは自動復帰する。
 G2に待機画面が出ない場合は、Even Realities Appからプラグインを起動し直す。
 
 ## 配布パッケージの作成・登録（開発者のみ）
@@ -108,8 +108,8 @@ Even Realities App と Even G2 の接続が不安定になることがある。�
 2. Even アプリを通常起動し、グラスの再接続を試す
 3. それでもダメならグラス電源・Even アプリの再起動（force-stop は最終手段）
 
-Voice Harness Android の loopback ブリッジ（`:8787`）は、**プラグインが動いているときだけ**
-ポーリングされる。プラグインを止めていれば、Voice Harness 本体の起動だけで G2 接続を
+Voice Clasp Android の loopback ブリッジ（`:8787`）は、**プラグインが動いているときだけ**
+ポーリングされる。プラグインを止めていれば、Voice Clasp 本体の起動だけで G2 接続を
 奪い続けることは通常ない。
 
 恒久利用時は QR/URL プロトタイプより `.ehpk` インストールの方がセッション管理が安定しやすい。
@@ -119,14 +119,14 @@ Voice Harness Android の loopback ブリッジ（`:8787`）は、**プラグイ
 ### AI返答
 
 1. Androidホームで「AI返答の出力先」を G2 にする。
-2. このプラグインを Even Hub で起動したまま Voice Harness に返答させる。
+2. このプラグインを Even Hub で起動したまま Voice Clasp に返答させる。
 3. Androidが loopback API に `mode=response` の本文を載せ、G2がページ分割して表示する。
 4. プラグイン未接続なら Android は TTS へフォールバックする。
 
 ### リーダーモード
 
 1. リーダーモードをONにする（ホームのトグル、または G2 接続中のダブルタップで「グラスモード変更 リーダーモード」）。
-   **Even G2 の Voice Harness プラグイン接続中のみ** ON できる。切替は G2 に `リーダーモード ON/OFF` と表示。
+   **Even G2 の Voice Clasp プラグイン接続中のみ** ON できる。切替は G2 に `リーダーモード ON/OFF` と表示。
    プラグイン終了で自動 OFF。
 2. Kindleを前面にすると（起動ジェスチャーなしで）自動的に本文抽出が始まる。  
    モード指示の確定時は現在画面からも抽出する。ON中にモード指示で他モードへ切り替えられる。
@@ -144,7 +144,7 @@ Kindle本文だけを抽出し、G2の未消費本文へ追加する。
 
 ### Harborモード
 
-1. AndroidのVoice HarnessでTerminal Harborの **Pair mobile** QRを読み取る。
+1. AndroidのVoice ClaspでTerminal Harborの **Pair mobile** QRを読み取る。
 2. ホームの操作モード、またはダブルタップで「グラスモード変更 ハーバーモード」と指示して切り替える。
 3. AndroidがMacで選択中のワークスペースのG2表示を取得し、loopback APIへ載せる。
 4. 出力中は空白・罫線・点線だけの行を省き、G2領域に収まる最長の末尾を表示する。

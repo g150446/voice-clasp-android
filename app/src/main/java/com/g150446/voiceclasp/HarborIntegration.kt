@@ -1,0 +1,2151 @@
+package com.g150446.voiceclasp
+
+import android.content.Context
+import android.net.Uri
+import android.os.SystemClock
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
+import android.util.Base64
+import android.util.Log
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlin.coroutines.coroutineContext
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
+import org.json.JSONObject
+import java.nio.ByteBuffer
+import java.security.KeyStore
+import java.security.MessageDigest
+import java.security.SecureRandom
+import java.util.Locale
+import java.util.UUID
+import java.util.concurrent.TimeUnit
+import javax.crypto.Cipher
+import javax.crypto.KeyGenerator
+import javax.crypto.Mac
+import javax.crypto.SecretKey
+import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.SecretKeySpec
+
+enum class InteractionMode { AI, READER, HARBOR, OPENCLAW, EPUB }
+
+internal enum class CapturePurpose { AI_QUERY, COMMAND }
+
+internal fun parseInteractionMode(text: String): InteractionMode? {
+    val normalized = text.lowercase(Locale.ROOT)
+        .replace(Regex("[\\s、。,.!！?？・:_-]+"), "")
+    val openClaw = listOf("openclaw", "オープンクロー", "オープンクロウ", "オープンクロ")
+        .any(normalized::contains)
+    val epub = listOf("epub", "イーパブ", "イーパッブ", "イーバブ").any(normalized::contains)
+    val matches = buildSet {
+        if (epub) add(InteractionMode.EPUB)
+        if (openClaw) add(InteractionMode.OPENCLAW)
+        if (listOf("ハーバー", "terminalharbor", "ターミナル").any(normalized::contains)) {
+            add(InteractionMode.HARBOR)
+        }
+        if (listOf("pilot", "パイロット").any(normalized::contains)) {
+            add(InteractionMode.AI)
+        }
+        // "EPUBリーダー" names the EPUB reader, not the Kindle reader.
+        if (!epub && listOf("リーダー", "読書", "reader").any(normalized::contains)) {
+            add(InteractionMode.READER)
+        }
+    }
+    return matches.singleOrNull()
+}
+
+internal fun canEnableInteractionMode(
+    mode: InteractionMode,
+    g2Active: Boolean,
+    harborPaired: Boolean,
+    openClawConfigured: Boolean = false,
+    epubReady: Boolean = false,
+): Boolean = when (mode) {
+    InteractionMode.AI -> true
+    InteractionMode.READER -> g2Active
+    InteractionMode.HARBOR -> harborPaired
+    InteractionMode.OPENCLAW -> openClawConfigured
+    InteractionMode.EPUB -> epubReady
+}
+
+internal data class HarborEndpoint(val kind: String, val url: String)
+
+internal data class HarborPairPayload(
+    val token: String,
+    val serverId: String,
+    val endpoints: List<HarborEndpoint>,
+) {
+    companion object {
+        fun parse(raw: String): HarborPairPayload {
+            val uri = Uri.parse(raw.trim())
+            require(uri.scheme == "harbor" && uri.host == "pair") {
+                "Terminal HarborのペアリングURIではありません"
+            }
+            require(uri.getQueryParameter("v") == "1") { "未対応のペアリングURIです" }
+            require(uri.getQueryParameter("auth") == "hmac-sha256-v1") {
+                "HMAC対応のTerminal Harborが必要です"
+            }
+            val token = uri.getQueryParameter("token")?.takeIf(String::isNotBlank)
+                ?: error("ペアリングトークンがありません")
+            val serverId = uri.getQueryParameter("sid")?.takeIf(String::isNotBlank)
+                ?: error("Terminal Harborのserver IDがありません")
+            val endpoints = uri.getQueryParameters("endpoint").mapNotNull { encoded ->
+                val separator = encoded.indexOf(',')
+                if (separator <= 0) null else HarborEndpoint(
+                    kind = encoded.substring(0, separator),
+                    url = encoded.substring(separator + 1).trimEnd('/'),
+                ).takeIf { it.url.startsWith("http://") || it.url.startsWith("https://") }
+            }.toMutableList()
+            val host = uri.getQueryParameter("host")
+            val port = uri.getQueryParameter("port")?.toIntOrNull()
+            if (host != null && port != null && port in 1..65535) {
+                val scheme = if (uri.getQueryParameter("tls") in setOf("1", "true")) "https" else "http"
+                val fallback = HarborEndpoint("legacy", "$scheme://$host:$port")
+                if (endpoints.none { it.url == fallback.url }) endpoints += fallback
+            }
+            require(endpoints.isNotEmpty()) { "接続先がありません" }
+            val rank = mapOf("tailscale_https" to 0, "tailscale_direct" to 1, "lan" to 2)
+            return HarborPairPayload(token, serverId, endpoints.sortedBy { rank[it.kind] ?: 3 })
+        }
+    }
+}
+
+internal data class HarborCredentials(
+    val baseUrl: String,
+    val serverId: String,
+    val clientId: String,
+    val key: ByteArray,
+    val endpoints: List<HarborEndpoint> = emptyList(),
+    val deviceName: String? = null,
+)
+
+data class HarborConnectionState(
+    val paired: Boolean = false,
+    val connected: Boolean = false,
+    val deviceName: String? = null,
+    val workspaceName: String? = null,
+    val error: String? = null,
+)
+
+data class HarborWorkspace(
+    val id: String,
+    val name: String,
+    val selected: Boolean,
+    val root: String? = null,
+    val agent: String? = null,
+    val process: String? = null,
+    val summary: String? = null,
+)
+
+/**
+ * Resolves a confirmed switch target against the workspace list.
+ *
+ * The target comes from the interpreter's `workspace` field, so it is already a name
+ * rather than a whole utterance; matching it by name is safe here. An ambiguous partial
+ * match resolves to null so the caller can say so instead of guessing.
+ */
+internal fun resolveHarborWorkspace(
+    target: String,
+    workspaces: List<HarborWorkspace>,
+): HarborWorkspace? = harborWorkspaceCandidates(target, workspaces).singleOrNull()
+
+/**
+ * Every workspace [target] could mean: one when it resolves, none when it is unknown, several
+ * when it is ambiguous. The caller needs the difference — 「voice-clasp」 hits both
+ * `voice-clasp-android` and `voice-clasp-even-g2`, and telling the user it was *not found*
+ * sends them looking for a workspace that is right there.
+ */
+internal fun harborWorkspaceCandidates(
+    target: String,
+    workspaces: List<HarborWorkspace>,
+): List<HarborWorkspace> {
+    val needle = harborWorkspaceKey(target)
+    if (needle.isEmpty()) return emptyList()
+    workspaces.firstOrNull { harborWorkspaceKey(it.name) == needle }?.let { return listOf(it) }
+    workspaces.firstOrNull { harborWorkspaceKey(it.id) == needle }?.let { return listOf(it) }
+    return workspaces.filter {
+        val key = harborWorkspaceKey(it.name)
+        key.isNotEmpty() && (key.contains(needle) || needle.contains(key))
+    }
+}
+
+private fun harborWorkspaceKey(value: String): String =
+    value.lowercase(Locale.ROOT).filter(Char::isLetterOrDigit)
+
+internal data class HarborScreen(val text: String)
+data class HarborTab(
+    val id: String,
+    val title: String,
+    val selected: Boolean,
+    val paneCount: Int,
+)
+
+data class HarborDevice(
+    val id: String,
+    val name: String,
+    val endpoint: String,
+    val active: Boolean,
+)
+
+/**
+ * The plan file an agent wrote, from `GET /v1/workspaces/{id}/plan`.
+ *
+ * This is never derived from the terminal screen: the screen only holds the rows that are
+ * still on it, so a plan read from there is cut off at whatever has scrolled past. [available]
+ * false is a normal answer with a [reason] — the caller shows that reason and must not put
+ * screen text in its place.
+ */
+data class HarborPlan(
+    val available: Boolean,
+    val capability: String,
+    val agent: String? = null,
+    val text: String = "",
+    val updatedAt: String? = null,
+    val reason: String? = null,
+)
+
+/** One turn of the agent conversation, from `GET /v1/workspaces/{id}/transcript`. */
+data class HarborTranscriptMessage(
+    val role: String,
+    val text: String,
+    val at: String? = null,
+    /** Opaque paging position; hand it back as `before` to read older messages. */
+    val cursor: String = "",
+    val truncated: Boolean = false,
+) {
+    val isUser: Boolean get() = role == "user"
+}
+
+/**
+ * A page of the conversation between the user and the agent in a workspace.
+ *
+ * An agent's TUI repaints in place, so the terminal keeps roughly one screenful of it and
+ * `/screen` cannot reach the instruction behind an earlier reply. This comes from the agent's
+ * own session log instead. As with [HarborPlan], [available] false is a normal answer with a
+ * [reason], and terminal text is never shown in its place.
+ */
+data class HarborTranscript(
+    val available: Boolean,
+    val capability: String,
+    val agent: String? = null,
+    val messages: List<HarborTranscriptMessage> = emptyList(),
+    val hasMore: Boolean = false,
+    val nextBefore: String? = null,
+    val reason: String? = null,
+)
+
+/**
+ * harbor_command is offered to the LLM only in Harbor mode. Pilot speech must never reach
+ * Claude Code, even when a request ("open the Chrome app") reads like a terminal task.
+ */
+internal fun harborToolAvailable(
+    paired: Boolean,
+    mode: InteractionMode,
+    openClawRoute: Boolean = false,
+): Boolean = paired && mode == InteractionMode.HARBOR && !openClawRoute
+
+/** The workspace to reopen when Harbor mode is entered: Harbor's own active one first. */
+internal fun lastHarborWorkspaceId(
+    workspaces: List<HarborWorkspace>,
+    activatedId: String?,
+    selectedId: String?,
+): String? {
+    workspaces.firstOrNull { it.selected }?.let { return it.id }
+    // A remembered id may name a workspace closed since; trust it only while the list is unknown.
+    return listOfNotNull(activatedId, selectedId)
+        .firstOrNull { id -> workspaces.isEmpty() || workspaces.any { it.id == id } }
+}
+
+data class HarborUiState(
+    val devices: List<HarborDevice> = emptyList(),
+    val workspaces: List<HarborWorkspace> = emptyList(),
+    val tabs: List<HarborTab> = emptyList(),
+    val selectedWorkspaceId: String? = null,
+    /**
+     * The workspace Harbor was last told to activate, by tap or by voice.
+     *
+     * Distinct from [selectedWorkspaceId], which the workspace screen overwrites with whatever
+     * it is polling — so it can only ever confirm where the screen already was. A voice switch
+     * moved Harbor and the glass while the screen kept polling the workspace the user had
+     * opened by hand, which is what 「切り替わらない」 looked like from the phone.
+     */
+    val activatedWorkspaceId: String? = null,
+    val screenText: String = "",
+    val speechHints: List<String> = emptyList(),
+    val plan: HarborPlan? = null,
+    val planError: String? = null,
+    val planLoading: Boolean = false,
+    /** Oldest first, grown at the front as older pages are loaded. */
+    val transcript: List<HarborTranscriptMessage> = emptyList(),
+    /** Whose log [transcript] is: cursors are byte offsets, meaningless across workspaces. */
+    val transcriptWorkspaceId: String? = null,
+    val transcriptAgent: String? = null,
+    val transcriptHasMore: Boolean = false,
+    val transcriptCursor: String? = null,
+    val transcriptUnavailable: HarborTranscript? = null,
+    val transcriptError: String? = null,
+    val transcriptLoading: Boolean = false,
+    val busy: Boolean = false,
+    val error: String? = null,
+)
+internal data class HarborG2View(
+    val summary: Boolean,
+    val text: String = "",
+    val summaryText: String = "",
+    val question: String = "",
+    val options: List<String> = emptyList(),
+)
+
+/** A completed coding-agent update that is useful without looking at the terminal. */
+internal data class HarborSpokenSummary(
+    val workspaceId: String,
+    val agent: String?,
+    val summary: String,
+    val question: String = "",
+    val options: List<String> = emptyList(),
+)
+
+internal fun harborConfirmationSpeech(aiComment: String?): String =
+    aiComment.orEmpty().trim()
+
+internal fun harborExecutionAcknowledgementSpeech(): String = "実行します"
+
+internal fun harborCancellationAcknowledgementSpeech(): String = "キャンセルします"
+
+/** Glyph labels like ⇧Tab or ^C read badly aloud, so speech names keys in words. */
+private val HARBOR_SPOKEN_KEYS = mapOf(
+    "enter" to "エンター",
+    "escape" to "エスケープ",
+    "shift-tab" to "シフトタブ",
+    "tab" to "タブ",
+    "up" to "上矢印",
+    "down" to "下矢印",
+    "left" to "左矢印",
+    "right" to "右矢印",
+    "space" to "スペース",
+    "ctrl-c" to "コントロールC",
+)
+
+/**
+ * What an auto-run command says as it starts. The intent summary is phrased as a confirm
+ * question, which would be wrong for something already running.
+ */
+internal fun harborAutoRunSpeech(args: HarborCommandArgs): String {
+    if (args.action == HarborCommandAction.SWITCH_WORKSPACE) {
+        return "${args.workspace.orEmpty()}に切り替えます"
+    }
+    val steps = args.effectiveSteps
+    // A sequence is announced as a whole; what a read step finds is spoken once it is known.
+    if (steps.size > 1) return "手順を実行します"
+    val step = steps.firstOrNull() ?: return harborExecutionAcknowledgementSpeech()
+    return when (step.action) {
+        HarborStepAction.MODE -> "${(step.mode ?: ClaudeCodeMode.NORMAL).label}モードに切り替えます"
+        HarborStepAction.KEY -> {
+            val key = step.key ?: "enter"
+            "${HARBOR_SPOKEN_KEYS[key] ?: key}キーを送ります"
+        }
+        HarborStepAction.INSTRUCTION -> harborAutoRunSlashCommand(step.command)
+            ?.let { "${it}コマンドを送ります" }
+            ?: harborExecutionAcknowledgementSpeech()
+        HarborStepAction.READ -> "画面を確認します"
+    }
+}
+
+/**
+ * Built-in Claude Code and Codex slash commands that may run without a confirm tap. Commands
+ * that end the session or change the login (exit, quit, logout, login, upgrade) are left out on
+ * purpose, as are unknown names: a misheard or custom command keeps the confirm step.
+ */
+private val HARBOR_AUTO_RUN_SLASH_COMMANDS = setOf(
+    // Claude Code
+    "add-dir", "agents", "clear", "compact", "config", "context", "cost", "doctor", "export",
+    "help", "hooks", "ide", "init", "mcp", "memory", "model", "output-style", "permissions",
+    "plugin", "pr-comments", "release-notes", "resume", "review", "rewind", "security-review",
+    "status", "statusline", "todos", "usage", "vim",
+    // Codex
+    "approvals", "new", "diff", "mention", "undo", "fork", "skills", "personality",
+)
+
+private val HARBOR_SLASH_COMMAND = Regex("""^/([a-z][a-z0-9-]*)(?:[ \t]+[^\n]*)?$""")
+
+/** The command name when [command] is one known slash command safe to auto-run, else null. */
+internal fun harborAutoRunSlashCommand(command: String): String? {
+    val name = HARBOR_SLASH_COMMAND.matchEntire(command.trim())?.groupValues?.get(1) ?: return null
+    return name.takeIf { it in HARBOR_AUTO_RUN_SLASH_COMMANDS }
+}
+
+internal fun harborWorkSummarySpeech(value: HarborSpokenSummary): String {
+    val agentLabel = when {
+        value.agent.orEmpty().contains("claude", ignoreCase = true) -> "Claude Code"
+        value.agent.orEmpty().contains("codex", ignoreCase = true) -> "Codex"
+        else -> "AIエージェント"
+    }
+    return buildString {
+        append(agentLabel).append("の作業内容です。")
+        value.summary.trim().takeIf(String::isNotEmpty)?.let(::append)
+        value.question.trim().takeIf(String::isNotEmpty)?.let {
+            append("確認を求めています。").append(it)
+        }
+        if (value.options.isNotEmpty()) {
+            append("選択肢は、").append(value.options.joinToString("、")).append("です。")
+        }
+    }
+}
+
+internal fun filterHarborDisplayText(text: String): String {
+    val separators = "-_.=~‐‑‒–—―·•⋅⋯…─━│┃┄┅┆┇┈┉┊┋╌╍╎╏┌┐└┘├┤┬┴┼╭╮╰╯"
+    return text.lineSequence()
+        .map(String::trimEnd)
+        .filter { line ->
+            val trimmed = line.trim()
+            trimmed.isNotEmpty() && !trimmed.all { it.isWhitespace() || separators.contains(it) }
+        }
+        .joinToString("\n")
+}
+
+internal fun shouldPublishHarborPoll(paused: Boolean, coroutineActive: Boolean): Boolean =
+    !paused && coroutineActive
+
+/** One signed call against Terminal Harbor, already bound to the workspace it targets. */
+internal sealed interface HarborOperation {
+    val workspaceId: String
+    val waitMs: Int
+
+    data class Activate(override val workspaceId: String, override val waitMs: Int = 0) :
+        HarborOperation
+
+    data class Instruction(
+        override val workspaceId: String,
+        val text: String,
+        val submit: Boolean,
+        override val waitMs: Int = HARBOR_STEP_DELAY_MS,
+    ) : HarborOperation
+
+    data class Key(
+        override val workspaceId: String,
+        val key: String,
+        override val waitMs: Int = HARBOR_STEP_DELAY_MS,
+    ) : HarborOperation
+
+    /**
+     * Leave Claude Code in [mode]. How many ⇧Tab presses that takes is not decided here, and
+     * deliberately not decided by whoever interpreted the request either: the sender presses
+     * one key at a time and reads the mode back off the screen between presses.
+     */
+    data class SetMode(
+        override val workspaceId: String,
+        val mode: ClaudeCodeMode,
+        /** Agent reported by Harbor; both agents use ⇧Tab but expose different mode sets. */
+        val agent: String? = null,
+        override val waitMs: Int = HARBOR_MODE_SETTLE_MS,
+    ) : HarborOperation
+
+    /**
+     * Read the screen and tell the user the answer to [question]. Sends nothing: it waits
+     * [settleMs] for the agent to draw what the previous step asked for (`/usage` fetches its
+     * numbers before painting them), then reads.
+     */
+    data class Read(
+        override val workspaceId: String,
+        val question: String,
+        val settleMs: Int = HARBOR_READ_SETTLE_MS,
+        override val waitMs: Int = HARBOR_STEP_DELAY_MS,
+    ) : HarborOperation
+}
+
+internal const val HARBOR_READ_SETTLE_MS = 1_500
+private const val HARBOR_READ_SCREEN_LINES = 200
+
+internal data class HarborSubmitPlan(
+    val operations: List<HarborOperation>,
+    val message: String,
+)
+
+/**
+ * Turns a confirmed command into the exact calls to make, and refuses anything Harbor cannot
+ * carry out — before the first one is sent, so a bad key in the middle of a sequence cannot
+ * leave the terminal half-way through something the user approved as a whole.
+ *
+ * The target workspace is the one the interpretation was made against. Resolving it at send
+ * time instead would let a switch between the confirmation and the tap redirect approved text
+ * into another terminal.
+ */
+internal fun planHarborSubmit(
+    args: HarborCommandArgs,
+    workspaces: List<HarborWorkspace>,
+): HarborSubmitPlan {
+    if (args.action == HarborCommandAction.SWITCH_WORKSPACE) {
+        val target = args.workspace?.trim().orEmpty()
+        if (target.isEmpty()) error("切り替え先のワークスペースが空です")
+        val candidates = harborWorkspaceCandidates(target, workspaces)
+        if (candidates.size > 1) {
+            error("「$target」は複数あります（${candidates.joinToString(" / ") { it.name }}）")
+        }
+        val match = candidates.singleOrNull()
+            ?: error("「$target」というワークスペースが見つかりません")
+        return HarborSubmitPlan(
+            operations = listOf(HarborOperation.Activate(match.id)),
+            message = "${match.name} に切り替えました",
+        )
+    }
+
+    val targetWorkspace = args.workspaceId?.let { id -> workspaces.firstOrNull { it.id == id } }
+        ?: workspaces.firstOrNull { it.selected }
+        ?: error("選択中のワークスペースがありません")
+    val targetId = targetWorkspace.id
+
+    val steps = args.effectiveSteps
+    if (steps.isEmpty()) error("送信する指示が空です")
+    val operations = steps.map { step ->
+        when (step.action) {
+            HarborStepAction.KEY -> {
+                val key = HarborCommandTool.normalizeKeyName(step.key)
+                    ?: error("「${step.key}」は送信できないキーです")
+                HarborOperation.Key(targetId, key, step.waitMs)
+            }
+
+            HarborStepAction.MODE -> {
+                val mode = step.mode ?: error("切り替えるモードが指定されていません")
+                HarborOperation.SetMode(
+                    workspaceId = targetId,
+                    mode = mode,
+                    agent = targetWorkspace.agent ?: targetWorkspace.process,
+                    waitMs = step.waitMs,
+                )
+            }
+
+            HarborStepAction.INSTRUCTION -> {
+                val text = step.command.trim()
+                if (text.isEmpty()) error("送信する指示が空です")
+                HarborOperation.Instruction(targetId, text, step.submit, step.waitMs)
+            }
+
+            HarborStepAction.READ -> HarborOperation.Read(
+                workspaceId = targetId,
+                question = step.question.trim().ifEmpty { error("読み取る内容が指定されていません") },
+                waitMs = step.waitMs,
+            )
+        }
+    }
+    return HarborSubmitPlan(operations, describeHarborSteps(steps))
+}
+
+/**
+ * What was just sent, in one line the glass can hold next to the terminal mirror.
+ *
+ * A mode step has no line here: what it did is only known once the screen has been read back,
+ * so [HarborMirrorController.submitCommand] supplies that line itself.
+ */
+internal fun describeHarborSteps(steps: List<HarborCommandStep>): String {
+    if (steps.size == 1) {
+        val step = steps.first()
+        return when (step.action) {
+            HarborStepAction.KEY -> "${HarborCommandTool.keyLabel(step.key ?: "enter")}キーを送りました"
+            HarborStepAction.MODE -> ""
+            HarborStepAction.INSTRUCTION ->
+                if (step.submit) "指示を送りました" else "指示を貼り付けました"
+            HarborStepAction.READ -> ""
+        }
+    }
+    val sequence = steps.joinToString(" → ") { step ->
+        when (step.action) {
+            HarborStepAction.KEY -> HarborCommandTool.keyLabel(step.key ?: "enter")
+            HarborStepAction.MODE -> HarborCommandTool.modeLabel(step.mode)
+            HarborStepAction.READ -> HarborCommandTool.readLabel(step.question)
+            HarborStepAction.INSTRUCTION -> step.command.take(20)
+        }
+    }
+    return "$sequence を送りました"
+}
+
+/**
+ * Parses a `/plan` response.
+ *
+ * A success is always whole: the bridge sends `complete: true` and a SHA-256 of the bytes it
+ * read. Both are checked here, because showing a partial plan as if it were the plan is worse
+ * than showing nothing — the user would act on half a document without knowing it.
+ */
+internal fun parseHarborPlan(code: Int, json: JSONObject): HarborPlan {
+    val capability = json.optString("capability").ifBlank { "unknown" }
+    val agent = json.optString("agent").trim().takeIf(String::isNotEmpty)
+    if (code == 413) {
+        return HarborPlan(
+            available = false,
+            capability = capability,
+            agent = agent,
+            reason = json.optString("reason").ifBlank { "plan_too_large" },
+        )
+    }
+    if (!json.optBoolean("available", false)) {
+        return HarborPlan(
+            available = false,
+            capability = capability,
+            agent = agent,
+            reason = json.optString("reason").ifBlank { "unknown" },
+        )
+    }
+    val text = json.optString("text")
+    if (!json.optBoolean("complete", false)) {
+        error("Terminal Harborが不完全なプランを返しました")
+    }
+    val expected = json.optString("content_sha256").lowercase(Locale.ROOT)
+    if (expected.isNotEmpty() && expected != sha256Hex(text.toByteArray(Charsets.UTF_8))) {
+        error("プランの内容が壊れています（ハッシュ不一致）")
+    }
+    return HarborPlan(
+        available = true,
+        capability = capability,
+        agent = agent,
+        text = text,
+        updatedAt = json.optString("updated_at").trim().takeIf(String::isNotEmpty),
+    )
+}
+
+/**
+ * Parses a `/transcript` page.
+ *
+ * Messages arrive oldest first within a page; [HarborTranscript.nextBefore] walks to the page
+ * before it. A message the bridge had to cut carries its own marker, so nothing here has to
+ * guess whether text is complete.
+ */
+internal fun parseHarborTranscript(code: Int, json: JSONObject): HarborTranscript {
+    val capability = json.optString("capability").ifBlank { "unknown" }
+    val agent = json.optString("agent").trim().takeIf(String::isNotEmpty)
+    if (code !in 200..299 || !json.optBoolean("available", false)) {
+        return HarborTranscript(
+            available = false,
+            capability = capability,
+            agent = agent,
+            reason = json.optString("reason").ifBlank { "unknown" },
+        )
+    }
+    val rows = json.optJSONArray("messages") ?: JSONArray()
+    val messages = buildList {
+        for (index in 0 until rows.length()) {
+            val row = rows.optJSONObject(index) ?: continue
+            val role = row.optString("role").trim()
+            val text = row.optString("text")
+            if (role.isEmpty() || text.isBlank()) continue
+            add(
+                HarborTranscriptMessage(
+                    role = role,
+                    text = text,
+                    at = row.optString("at").trim().takeIf(String::isNotEmpty),
+                    cursor = row.optString("cursor").trim(),
+                    truncated = row.optBoolean("truncated", false),
+                ),
+            )
+        }
+    }
+    return HarborTranscript(
+        available = true,
+        capability = capability,
+        agent = agent,
+        messages = messages,
+        hasMore = json.optBoolean("has_more", false),
+        nextBefore = json.optString("next_before").trim().takeIf(String::isNotEmpty),
+    )
+}
+
+/**
+ * Folds a freshly fetched page into what is already on screen.
+ *
+ * An older page goes in front, minus anything already shown: the log can grow between
+ * requests, and repeating a message reads as the agent saying it twice.
+ *
+ * The newest page is a refresh. What it has in common with the screen says the two overlap,
+ * so only its genuinely newer messages are appended and the history the reader has already
+ * pulled in stays put. With nothing in common the conversation has moved on further than one
+ * page, and there is no honest way to bridge that gap, so the newest page replaces what is
+ * shown rather than leaving a seam that looks continuous.
+ */
+internal fun mergeHarborTranscript(
+    current: List<HarborTranscriptMessage>,
+    page: List<HarborTranscriptMessage>,
+    before: String?,
+): List<HarborTranscriptMessage> {
+    val seen = current.mapTo(mutableSetOf()) { it.cursor }
+    if (before != null) return page.filterNot { it.cursor in seen } + current
+    if (current.isEmpty() || page.none { it.cursor in seen }) return page
+    return current + page.filterNot { it.cursor in seen }
+}
+
+/** Why there is no conversation to show. Never implies the terminal view has it. */
+internal fun harborTranscriptReasonText(transcript: HarborTranscript): String =
+    when (transcript.reason) {
+        "no_agent" -> "このworkspaceではエージェントが動いていません。"
+        "unsupported_agent" -> "このエージェントは会話の取得に対応していません。"
+        "session_unidentified" ->
+            "このpaneのセッションを特定できません。Claude Codeなら Terminal Harbor で " +
+                "`wezterm agent-session install-hooks --agent claude --apply` を実行して" +
+                "起動し直してください。"
+        "stale_session" -> "セッション登録が古くなっています。エージェントを起動し直してください。"
+        "transcript_missing" -> "セッションの記録が見つかりません。"
+        "ambiguous_session" ->
+            "同じ条件のセッションが複数あり、どれがこのpaneのものか特定できません。"
+        "stale_cursor" -> "会話の位置が変わりました。もう一度開き直してください。"
+        "unsupported_api" -> "このTerminal Harborは会話の取得に未対応です（API 1.12.0以降が必要）。"
+        else -> "会話を取得できませんでした。"
+    }
+
+/** Why there is no plan to show, in the user's language. Never implies the screen has one. */
+internal fun harborPlanReasonText(plan: HarborPlan): String = when (plan.reason) {
+    "plan_not_created" -> "このセッションはまだプランを作成していません。"
+    "agent_has_no_plan_file" -> "このエージェント（${plan.agent ?: "Codex"}）はプランファイルを持ちません。"
+    "unsupported_agent" -> "このエージェントはプラン取得に対応していません。"
+    "no_agent" -> "このworkspaceではエージェントが動いていません。"
+    "session_unidentified" ->
+        "Claude Codeのhookが未登録です。Terminal Harborで " +
+            "`wezterm agent-session install-hooks --agent claude --apply` を実行し、" +
+            "Claude Codeを起動し直してください。"
+    "stale_session" -> "セッション登録が古くなっています。Claude Codeを起動し直してください。"
+    "plan_file_missing" -> "プランファイルが見つかりません。"
+    "plan_too_large" -> "プランが大きすぎて取得できません（1MiB超）。"
+    "unsupported_api" -> "このTerminal Harborはプラン取得に未対応です（API 1.11.0以降が必要）。"
+    else -> "プランを取得できませんでした。"
+}
+
+/** Harbor sends the plan file's mtime as RFC 3339; show it in the phone's own time zone. */
+internal fun harborPlanTimestamp(value: String): String = runCatching {
+    java.time.OffsetDateTime.parse(value)
+        .atZoneSameInstant(java.time.ZoneId.systemDefault())
+        .format(java.time.format.DateTimeFormatter.ofPattern("MM/dd HH:mm"))
+}.getOrDefault(value)
+
+/** Claude Code's plan-approval prompt, as its own strings print it. */
+private const val CLAUDE_PLAN_HEADER = "Here is Claude's plan:"
+private val CLAUDE_PLAN_QUESTIONS = listOf(
+    "Claude has written up a plan",
+    "Would you like to proceed",
+)
+
+private fun claudePlanQuestionLine(lines: List<String>): Int? =
+    CLAUDE_PLAN_QUESTIONS.firstNotNullOfOrNull { marker ->
+        lines.indexOfLast { it.contains(marker) }.takeIf { it >= 0 }
+    }
+
+internal fun hasClaudePlanApproval(screen: String): Boolean =
+    claudePlanQuestionLine(screen.lines()) != null
+
+/**
+ * The terminal with Claude Code's plan-approval prompt showing the whole plan file.
+ *
+ * The terminal keeps only the rows still on it, so a plan taller than the pane has lost its
+ * top by the time the prompt asks for approval. The rows between the prompt's header and its
+ * question are replaced by [plan]'s text — read whole from `/plan`, never rebuilt from rows —
+ * under a heading that says so. The question and its options stay last, where the
+ * follow-bottom scroll and the approval keys expect them. Without an available plan the
+ * screen is returned as it is.
+ */
+internal fun inlineHarborPlan(screen: String, plan: HarborPlan?): String {
+    if (plan == null || !plan.available) return screen
+    val lines = screen.lines()
+    val question = claudePlanQuestionLine(lines) ?: return screen
+    val header = lines.subList(0, question).indexOfLast { it.contains(CLAUDE_PLAN_HEADER) }
+    // No header: it has scrolled off, so every row above the question is plan.
+    val start = header + 1
+    val heading = listOfNotNull(
+        "${plan.agent ?: "エージェント"}のプランファイル全文",
+        plan.updatedAt?.let { "更新 ${harborPlanTimestamp(it)}" },
+    ).joinToString(" · ")
+    return buildList {
+        addAll(lines.subList(0, start))
+        add("── $heading ──")
+        addAll(plan.text.trimEnd('\n').lines())
+        add("──")
+        addAll(lines.subList(question, lines.size))
+    }.joinToString("\n")
+}
+
+/**
+ * The terminal with the last instruction and every reply to it above the live screen.
+ *
+ * A fullscreen agent TUI repaints in place, so the screen holds only the tail of a long reply.
+ * The exchange comes whole from the agent's session log ([messages], the `/transcript` state),
+ * never rebuilt from rows. Its end overlaps the screen; the divider says where the screen
+ * starts rather than guessing which rows repeat. Without a user message loaded there is no
+ * exchange to anchor on, and the screen is returned as it is.
+ */
+internal fun prependHarborExchange(
+    screen: String,
+    messages: List<HarborTranscriptMessage>,
+    agent: String?,
+): String {
+    val instruction = messages.indexOfLast { it.isUser && !isHarnessImageNote(it.text) }
+    if (instruction < 0) return screen
+    val exchange = messages.subList(instruction, messages.size)
+        .filterNot { it.isUser && isHarnessImageNote(it.text) }
+    return buildList {
+        add("── 直前の指示と${agent ?: "エージェント"}の応答（会話ログ全文）──")
+        exchange.forEachIndexed { index, message ->
+            if (index > 0) add("")
+            val text = message.text.trimEnd()
+            add(if (message.isUser) text.lines().joinToString("\n") { "> $it" } else text)
+        }
+        add("── ここから現在の画面 ──")
+        add(screen)
+    }.joinToString("\n")
+}
+
+/**
+ * Claude Code logs the size note of an image the agent looked at (a screenshot it read) as a
+ * user turn of its own. Nobody typed it, so it is neither the instruction nor part of a reply.
+ */
+private val HARNESS_IMAGE_NOTE = Regex("""^\[Image: original \d+x\d+[^\]]*]$""")
+internal fun isHarnessImageNote(text: String): Boolean = HARNESS_IMAGE_NOTE.matches(text.trim())
+
+/** Enough to reach an instruction behind a long reply without walking the whole log. */
+internal const val HARBOR_EXCHANGE_MAX_PAGES = 5
+
+internal fun parseHarborG2View(json: JSONObject): HarborG2View {
+    if (json.optString("view") != "summary") {
+        return HarborG2View(
+            summary = false,
+            text = filterHarborDisplayText(json.optString("text")),
+        )
+    }
+    val optionsJson = json.optJSONArray("options") ?: JSONArray()
+    val options = buildList {
+        for (index in 0 until optionsJson.length()) {
+            optionsJson.optString(index).trim().takeIf(String::isNotEmpty)?.let(::add)
+        }
+    }
+    return HarborG2View(
+        summary = true,
+        summaryText = json.optString("summary").trim(),
+        question = json.optString("question").trim(),
+        options = options,
+    )
+}
+
+internal class HarborCredentialsStore(private val context: Context) {
+    private val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+    fun load(): HarborCredentials? {
+        val stored = prefs.getString(KEY_VALUE, null) ?: return null
+        val plain = decrypt(stored) ?: return null
+        return runCatching {
+            val json = JSONObject(plain)
+            HarborCredentials(
+                baseUrl = json.getString("base_url"),
+                serverId = json.getString("server_id"),
+                clientId = json.getString("client_id"),
+                key = b64Decode(json.getString("key")),
+                endpoints = json.optJSONArray("endpoints")?.let { items ->
+                    buildList {
+                        for (index in 0 until items.length()) {
+                            val item = items.getJSONObject(index)
+                            add(HarborEndpoint(item.getString("kind"), item.getString("url")))
+                        }
+                    }
+                }.orEmpty(),
+                deviceName = json.optString("device_name").takeIf(String::isNotBlank),
+            )
+        }.getOrNull()
+    }
+
+    fun save(value: HarborCredentials) {
+        val json = JSONObject().apply {
+            put("base_url", value.baseUrl)
+            put("server_id", value.serverId)
+            put("client_id", value.clientId)
+            put("key", b64(value.key))
+            put("endpoints", JSONArray().apply {
+                value.endpoints.forEach { endpoint ->
+                    put(JSONObject().put("kind", endpoint.kind).put("url", endpoint.url))
+                }
+            })
+            put("device_name", value.deviceName ?: "")
+        }
+        prefs.edit().putString(KEY_VALUE, encrypt(json.toString())).apply()
+    }
+
+    fun loadAll(): List<HarborCredentials> {
+        val stored = prefs.getString(KEY_DEVICES, null)
+        if (stored == null) {
+            val legacy = load() ?: return emptyList()
+            saveAll(listOf(legacy))
+            return listOf(legacy)
+        }
+        val plain = decrypt(stored) ?: return emptyList()
+        return runCatching {
+            val array = JSONArray(plain)
+            buildList {
+                for (index in 0 until array.length()) {
+                    parseCredentials(array.getJSONObject(index))?.let(::add)
+                }
+            }
+        }.getOrDefault(emptyList())
+    }
+
+    fun saveAll(values: List<HarborCredentials>) {
+        val array = JSONArray()
+        values.forEach { value ->
+            array.put(JSONObject().apply {
+                put("base_url", value.baseUrl)
+                put("server_id", value.serverId)
+                put("client_id", value.clientId)
+                put("key", b64(value.key))
+                put("endpoints", JSONArray().apply {
+                    value.endpoints.forEach { endpoint ->
+                        put(JSONObject().put("kind", endpoint.kind).put("url", endpoint.url))
+                    }
+                })
+                put("device_name", value.deviceName ?: "")
+            })
+        }
+        prefs.edit().putString(KEY_DEVICES, encrypt(array.toString())).apply()
+    }
+
+    fun activeServerId(): String? = prefs.getString(KEY_ACTIVE_SERVER, null)
+
+    fun setActiveServerId(serverId: String?) {
+        prefs.edit().apply {
+            if (serverId == null) remove(KEY_ACTIVE_SERVER) else putString(KEY_ACTIVE_SERVER, serverId)
+        }.apply()
+    }
+
+    private fun parseCredentials(json: JSONObject): HarborCredentials? = runCatching {
+        HarborCredentials(
+            baseUrl = json.getString("base_url"),
+            serverId = json.getString("server_id"),
+            clientId = json.getString("client_id"),
+            key = b64Decode(json.getString("key")),
+            endpoints = json.optJSONArray("endpoints")?.let { items ->
+                buildList {
+                    for (index in 0 until items.length()) {
+                        val item = items.getJSONObject(index)
+                        add(HarborEndpoint(item.getString("kind"), item.getString("url")))
+                    }
+                }
+            }.orEmpty(),
+            deviceName = json.optString("device_name").takeIf(String::isNotBlank),
+        )
+    }.getOrNull()
+
+    fun clear() = prefs.edit().remove(KEY_VALUE).remove(KEY_DEVICES).remove(KEY_ACTIVE_SERVER).apply()
+
+    private fun encrypt(value: String): String {
+        val cipher = Cipher.getInstance(TRANSFORMATION)
+        cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey())
+        val encrypted = cipher.doFinal(value.toByteArray(Charsets.UTF_8))
+        val packed = ByteBuffer.allocate(1 + cipher.iv.size + encrypted.size)
+            .put(cipher.iv.size.toByte()).put(cipher.iv).put(encrypted).array()
+        return "v1:" + Base64.encodeToString(packed, Base64.NO_WRAP)
+    }
+
+    private fun decrypt(value: String): String? = runCatching {
+        require(value.startsWith("v1:"))
+        val buffer = ByteBuffer.wrap(Base64.decode(value.removePrefix("v1:"), Base64.NO_WRAP))
+        val iv = ByteArray(buffer.get().toInt() and 0xff).also(buffer::get)
+        val encrypted = ByteArray(buffer.remaining()).also(buffer::get)
+        val cipher = Cipher.getInstance(TRANSFORMATION)
+        cipher.init(Cipher.DECRYPT_MODE, getOrCreateKey(), GCMParameterSpec(128, iv))
+        String(cipher.doFinal(encrypted), Charsets.UTF_8)
+    }.getOrNull()
+
+    private fun getOrCreateKey(): SecretKey {
+        val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        (store.getKey(KEY_ALIAS, null) as? SecretKey)?.let { return it }
+        return KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore").run {
+            init(
+                KeyGenParameterSpec.Builder(
+                    KEY_ALIAS,
+                    KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
+                ).setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                    .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                    .setKeySize(256)
+                    .build()
+            )
+            generateKey()
+        }
+    }
+
+    private companion object {
+        const val PREFS = "terminal_harbor_credentials"
+        const val KEY_VALUE = "credentials"
+        const val KEY_DEVICES = "devices_v2"
+        const val KEY_ACTIVE_SERVER = "active_server_id"
+        const val KEY_ALIAS = "voice_clasp_terminal_harbor_aes"
+        const val TRANSFORMATION = "AES/GCM/NoPadding"
+    }
+}
+
+internal fun hasStoredHarborCredentials(context: Context): Boolean =
+    HarborCredentialsStore(context).loadAll().isNotEmpty()
+
+private const val TAG = "HarborApiClient"
+
+/** Enough of the terminal tail to hold Claude Code's footer, and no more. */
+private const val MODE_SCREEN_LINES = 40
+
+internal class HarborApiClient(
+    private val http: OkHttpClient = OkHttpClient.Builder()
+        .connectTimeout(3, TimeUnit.SECONDS)
+        .readTimeout(3, TimeUnit.SECONDS)
+        .writeTimeout(3, TimeUnit.SECONDS)
+        .build(),
+) {
+    private val g2Http = http.newBuilder()
+        .readTimeout(35, TimeUnit.SECONDS)
+        .callTimeout(40, TimeUnit.SECONDS)
+        .build()
+
+    fun pair(payload: HarborPairPayload): HarborCredentials {
+        val clientId = UUID.randomUUID().toString()
+        val nonceBytes = ByteArray(32).also(SecureRandom()::nextBytes)
+        val key = hkdfDeviceKey(payload.token, payload.serverId, clientId, nonceBytes)
+        val body = JSONObject().apply {
+            put("auth_version", "hmac-sha256-v1")
+            put("client_id", clientId)
+            put("client_nonce", b64(nonceBytes))
+            put("device_name", "Voice Clasp Android")
+        }.toString().toByteArray()
+        var lastError: Throwable? = null
+        for (endpoint in payload.endpoints) {
+            try {
+                val response = request(
+                    endpoint.url,
+                    "POST",
+                    "/v1/pair",
+                    body,
+                    payload.token.toByteArray(),
+                    responseKey = key,
+                )
+                if (response.code !in 200..299) error("Pairing failed: HTTP ${response.code}")
+                val json = JSONObject(String(response.body))
+                require(json.getString("server_id") == payload.serverId) {
+                    "別のTerminal Harborが応答しました"
+                }
+                return HarborCredentials(
+                    baseUrl = endpoint.url,
+                    serverId = payload.serverId,
+                    clientId = json.optString("client_id", clientId),
+                    key = key,
+                    endpoints = parseEndpoints(json.optJSONArray("endpoints")).ifEmpty {
+                        payload.endpoints
+                    },
+                    deviceName = json.optString("device_name").takeIf(String::isNotBlank),
+                )
+            } catch (error: Throwable) {
+                lastError = error
+            }
+        }
+        throw IllegalStateException("Terminal Harborに接続できません", lastError)
+    }
+
+    fun listWorkspaces(credentials: HarborCredentials): List<HarborWorkspace> {
+        val response = authorized(credentials, "GET", "/v1/workspaces")
+        checkOk(response)
+        val items = JSONObject(String(response.body)).optJSONArray("workspaces") ?: JSONArray()
+        return buildList {
+            for (index in 0 until items.length()) {
+                val item = items.getJSONObject(index)
+                add(
+                    HarborWorkspace(
+                        id = item.getString("id"),
+                        name = item.optString("directory").ifBlank {
+                            item.optString("name", "Workspace")
+                        },
+                        selected = item.optBoolean("selected"),
+                        root = item.optString("root").takeIf(String::isNotBlank),
+                        agent = item.optString("agent").trim().takeIf { it.isNotEmpty() },
+                        process = item.optString("process").trim().takeIf { it.isNotEmpty() },
+                        summary = item.optString("summary").trim().takeIf { it.isNotEmpty() },
+                    )
+                )
+            }
+        }
+    }
+
+    fun createWorkspace(credentials: HarborCredentials, root: String?): HarborWorkspace {
+        val body = JSONObject().apply {
+            root?.trim()?.takeIf(String::isNotEmpty)?.let { put("root", it) }
+        }.toString().toByteArray()
+        val response = authorized(credentials, "POST", "/v1/workspaces", body)
+        checkOk(response)
+        val item = JSONObject(String(response.body))
+        return HarborWorkspace(
+            id = item.getString("id"),
+            name = item.optString("directory").ifBlank { item.optString("name", "Workspace") },
+            selected = item.optBoolean("selected", true),
+            root = item.optString("root").takeIf(String::isNotBlank),
+            agent = item.optString("agent").takeIf(String::isNotBlank),
+            process = item.optString("process").takeIf(String::isNotBlank),
+            summary = item.optString("summary").takeIf(String::isNotBlank),
+        )
+    }
+
+    fun closeWorkspace(credentials: HarborCredentials, workspaceId: String) {
+        val path = "/v1/workspaces/${Uri.encode(workspaceId)}"
+        checkOk(authorized(credentials, "DELETE", path, "{\"confirm\":true}".toByteArray()))
+    }
+
+    fun listTabs(credentials: HarborCredentials, workspaceId: String): List<HarborTab> {
+        val path = "/v1/workspaces/${Uri.encode(workspaceId)}/tabs"
+        val response = authorized(credentials, "GET", path)
+        checkOk(response)
+        val items = JSONObject(String(response.body)).optJSONArray("tabs") ?: JSONArray()
+        return buildList {
+            for (index in 0 until items.length()) {
+                val item = items.getJSONObject(index)
+                add(HarborTab(
+                    id = item.getString("id"),
+                    title = item.optString("title", "Tab"),
+                    selected = item.optBoolean("selected"),
+                    paneCount = item.optInt("pane_count", 1),
+                ))
+            }
+        }
+    }
+
+    fun createTab(credentials: HarborCredentials, workspaceId: String) {
+        val path = "/v1/workspaces/${Uri.encode(workspaceId)}/tabs"
+        checkOk(authorized(credentials, "POST", path, "{}".toByteArray()))
+    }
+
+    fun activateTab(credentials: HarborCredentials, workspaceId: String, tabId: String) {
+        val path = "/v1/workspaces/${Uri.encode(workspaceId)}/tabs/${Uri.encode(tabId)}/activate"
+        checkOk(authorized(credentials, "POST", path, "{}".toByteArray()))
+    }
+
+    fun closeTab(credentials: HarborCredentials, workspaceId: String, tabId: String) {
+        val path = "/v1/workspaces/${Uri.encode(workspaceId)}/tabs/${Uri.encode(tabId)}"
+        checkOk(authorized(credentials, "DELETE", path, "{\"confirm\":true}".toByteArray()))
+    }
+
+    fun fetchScreen(
+        credentials: HarborCredentials,
+        workspaceId: String,
+        lines: Int = 60,
+    ): HarborScreen {
+        val clamped = lines.coerceIn(1, 20_000)
+        val path = "/v1/workspaces/${Uri.encode(workspaceId)}/screen?lines=$clamped"
+        val response = authorized(credentials, "GET", path)
+        checkOk(response)
+        return HarborScreen(JSONObject(String(response.body)).optString("text"))
+    }
+
+    /**
+     * The agent's own plan file. Deliberately has no `/screen` fallback: a screen snapshot is
+     * a different thing and [parseHarborPlan] would have no way to label it as one.
+     */
+    fun fetchPlan(credentials: HarborCredentials, workspaceId: String): HarborPlan {
+        val path = "/v1/workspaces/${Uri.encode(workspaceId)}/plan"
+        val response = authorized(credentials, "GET", path)
+        if (response.code == 404) {
+            return HarborPlan(available = false, capability = "unknown", reason = "unsupported_api")
+        }
+        if (response.code != 413) checkOk(response)
+        return parseHarborPlan(response.code, JSONObject(String(response.body)))
+    }
+
+    /**
+     * One page of the agent conversation. Like [fetchPlan] it has no `/screen` fallback: the
+     * terminal holds one repaint of the agent's UI, not the exchange being asked for.
+     */
+    fun fetchTranscript(
+        credentials: HarborCredentials,
+        workspaceId: String,
+        limit: Int = 20,
+        before: String? = null,
+    ): HarborTranscript {
+        val query = buildString {
+            append("?limit=").append(limit.coerceIn(1, 200))
+            before?.takeIf(String::isNotBlank)?.let { append("&before=").append(Uri.encode(it)) }
+        }
+        val path = "/v1/workspaces/${Uri.encode(workspaceId)}/transcript$query"
+        val response = authorized(credentials, "GET", path)
+        if (response.code == 404) {
+            return HarborTranscript(
+                available = false,
+                capability = "unknown",
+                reason = "unsupported_api",
+            )
+        }
+        checkOk(response)
+        return parseHarborTranscript(response.code, JSONObject(String(response.body)))
+    }
+
+    fun fetchInterpretContext(credentials: HarborCredentials): HarborInterpretContext? {
+        val workspaces = listWorkspaces(credentials)
+        val workspace = workspaces.firstOrNull { it.selected } ?: return null
+        val screen = runCatching {
+            fetchScreen(credentials, workspace.id, lines = INTERPRET_CONTEXT_LINES)
+        }.getOrElse {
+            fetchScreen(credentials, workspace.id, lines = 60)
+        }
+        val conversation = filterHarborDisplayText(screen.text)
+            .takeLast(INTERPRET_CONTEXT_MAX_CHARS)
+        return HarborInterpretContext(
+            workspaceId = workspace.id,
+            workspaceName = workspace.name,
+            agent = workspace.agent,
+            process = workspace.process,
+            workspaceSummary = workspace.summary,
+            conversation = conversation,
+            availableWorkspaces = workspaces.map { it.name },
+        )
+    }
+
+    fun fetchG2View(credentials: HarborCredentials, workspaceId: String): HarborG2View {
+        val path = "/v1/workspaces/${Uri.encode(workspaceId)}/g2-view"
+        val response = authorized(credentials, "POST", path, "{}".toByteArray())
+        if (response.code == 404) {
+            return HarborG2View(
+                summary = false,
+                text = filterHarborDisplayText(fetchScreen(credentials, workspaceId).text),
+            )
+        }
+        checkOk(response)
+        return parseHarborG2View(JSONObject(String(response.body)))
+    }
+
+    fun fetchSpeechHints(credentials: HarborCredentials, workspaceId: String): List<String> {
+        val path = "/v1/workspaces/${Uri.encode(workspaceId)}/speech/hints"
+        val response = authorized(credentials, "GET", path)
+        checkOk(response)
+        val items = JSONObject(String(response.body)).optJSONArray("hints") ?: JSONArray()
+        return buildList {
+            for (index in 0 until items.length()) {
+                items.optString(index).trim().takeIf(String::isNotEmpty)?.let(::add)
+            }
+        }
+    }
+
+    fun postInstruction(
+        credentials: HarborCredentials,
+        workspaceId: String,
+        text: String,
+        submit: Boolean = true,
+    ) {
+        val path = "/v1/workspaces/${Uri.encode(workspaceId)}/instruction"
+        val body = JSONObject().put("text", text).put("submit", submit).toString().toByteArray()
+        val response = authorized(credentials, "POST", path, body)
+        Log.i(TAG, "instruction http=${response.code} chars=${text.length}")
+        checkOk(response)
+    }
+
+    fun postActivate(credentials: HarborCredentials, workspaceId: String) {
+        val path = "/v1/workspaces/${Uri.encode(workspaceId)}/activate"
+        val response = authorized(credentials, "POST", path, "{}".toByteArray())
+        Log.i(TAG, "activate http=${response.code} workspace=$workspaceId")
+        checkOk(response)
+    }
+
+    fun postKey(credentials: HarborCredentials, workspaceId: String, key: String) {
+        val path = "/v1/workspaces/${Uri.encode(workspaceId)}/key"
+        val body = JSONObject().put("key", key).toString().toByteArray()
+        val response = authorized(credentials, "POST", path, body)
+        Log.i(TAG, "key http=${response.code} key=$key")
+        checkOk(response)
+    }
+
+    private fun authorized(
+        credentials: HarborCredentials,
+        method: String,
+        path: String,
+        body: ByteArray = ByteArray(0),
+    ): HarborResponse {
+        val candidates = buildList {
+            add(credentials.baseUrl)
+            credentials.endpoints.mapTo(this) { it.url }
+        }.distinct()
+        var lastError: Throwable? = null
+        for (baseUrl in candidates) {
+            try {
+                return request(
+                    baseUrl,
+                    method,
+                    path,
+                    body,
+                    credentials.key,
+                    clientId = credentials.clientId,
+                )
+            } catch (error: Throwable) {
+                lastError = error
+            }
+        }
+        throw IllegalStateException("Terminal Harborに接続できません", lastError)
+    }
+
+    private fun parseEndpoints(items: JSONArray?): List<HarborEndpoint> {
+        if (items == null) return emptyList()
+        return buildList {
+            for (index in 0 until items.length()) {
+                val item = items.optJSONObject(index) ?: continue
+                val kind = item.optString("kind")
+                val url = item.optString("url").trimEnd('/')
+                if (kind.isNotBlank() && (url.startsWith("http://") || url.startsWith("https://"))) {
+                    add(HarborEndpoint(kind, url))
+                }
+            }
+        }
+    }
+
+    private data class HarborResponse(val code: Int, val body: ByteArray)
+
+    private fun request(
+        baseUrl: String,
+        method: String,
+        path: String,
+        body: ByteArray,
+        signingKey: ByteArray,
+        responseKey: ByteArray = signingKey,
+        clientId: String? = null,
+    ): HarborResponse {
+        val timestamp = System.currentTimeMillis() / 1_000L
+        val nonce = b64(ByteArray(18).also(SecureRandom()::nextBytes))
+        val canonical = "TH-HMAC-V1\n${method.uppercase()}\n$path\n$timestamp\n$nonce\n${sha256Hex(body)}"
+        val signature = b64(hmac(signingKey, canonical.toByteArray()))
+        val builder = Request.Builder()
+            .url(baseUrl.trimEnd('/') + path)
+            .header("Accept", "application/json")
+            .header("X-Harbor-Timestamp", timestamp.toString())
+            .header("X-Harbor-Nonce", nonce)
+            .header("X-Harbor-Signature", signature)
+        if (clientId != null) builder.header("X-Harbor-Client-Id", clientId)
+        if (body.isNotEmpty()) builder.header("Content-Type", "application/json")
+        builder.method(method, if (method == "GET") null else body.toRequestBody(JSON))
+        val requestClient =
+            if (path.endsWith("/g2-view") || path.endsWith("/voice/intent")) g2Http else http
+        requestClient.newCall(builder.build()).execute().use { response ->
+            val bytes = response.body.bytes()
+            val actual = response.header("X-Harbor-Response-Signature")
+                ?: error("認証されていない応答です")
+            val responseCanonical =
+                "TH-HMAC-V1-RESPONSE\n$nonce\n${response.code}\n${sha256Hex(bytes)}"
+            val expected = hmac(responseKey, responseCanonical.toByteArray())
+            require(MessageDigest.isEqual(expected, b64Decode(actual))) {
+                "Terminal Harbor応答の署名が不正です"
+            }
+            return HarborResponse(response.code, bytes)
+        }
+    }
+
+    private fun checkOk(response: HarborResponse) {
+        if (response.code !in 200..299) error("Terminal Harbor HTTP ${response.code}")
+    }
+
+    companion object {
+        private val JSON = "application/json; charset=utf-8".toMediaType()
+        internal const val INTERPRET_CONTEXT_LINES = 2_000
+        internal const val INTERPRET_CONTEXT_MAX_CHARS = 64 * 1_024
+    }
+}
+
+internal class HarborMirrorController(
+    context: Context,
+    private val scope: CoroutineScope,
+    private val client: HarborApiClient = HarborApiClient(),
+    private val onCompletionCandidate: (HarborCompletionCandidate) -> Unit = {},
+) {
+    private val store = HarborCredentialsStore(context)
+    private var allCredentials = store.loadAll().toMutableList()
+    private var credentials = allCredentials.firstOrNull {
+        it.serverId == store.activeServerId()
+    } ?: allCredentials.firstOrNull()
+    private var job: Job? = null
+    @Volatile private var paused = false
+    private var mode = InteractionMode.AI
+    private val completionTracker = HarborCompletionTracker()
+    private val _state = MutableStateFlow(
+        HarborConnectionState(paired = credentials != null, deviceName = credentials?.deviceName)
+    )
+    val state: StateFlow<HarborConnectionState> = _state.asStateFlow()
+    private val _uiState = MutableStateFlow(
+        HarborUiState(devices = deviceSummaries())
+    )
+    val uiState: StateFlow<HarborUiState> = _uiState.asStateFlow()
+
+    fun isPaired(): Boolean = credentials != null
+
+    private fun deviceSummaries(): List<HarborDevice> = allCredentials.map { item ->
+        HarborDevice(
+            id = item.serverId,
+            name = item.deviceName ?: Uri.parse(item.baseUrl).host ?: "Terminal Harbor",
+            endpoint = item.baseUrl,
+            active = item.serverId == credentials?.serverId,
+        )
+    }
+
+    private fun updateDevices() {
+        _uiState.value = _uiState.value.copy(devices = deviceSummaries())
+    }
+
+    fun refreshWorkspaces(onComplete: (() -> Unit)? = null) {
+        val creds = credentials ?: run {
+            _uiState.value = _uiState.value.copy(error = "Terminal Harborをペアリングしてください")
+            onComplete?.invoke()
+            return
+        }
+        scope.launch(Dispatchers.IO) {
+            _uiState.value = _uiState.value.copy(busy = true, error = null)
+            runCatching { client.listWorkspaces(creds) }
+                .onSuccess { workspaces ->
+                    _uiState.value = _uiState.value.copy(
+                        workspaces = workspaces,
+                        selectedWorkspaceId = workspaces.firstOrNull { it.selected }?.id,
+                        busy = false,
+                    )
+                    _state.value = _state.value.copy(
+                        connected = true,
+                        workspaceName = workspaces.firstOrNull { it.selected }?.name,
+                        error = null,
+                    )
+                }
+                .onFailure { error ->
+                    _uiState.value = _uiState.value.copy(busy = false, error = error.message)
+                }
+            onComplete?.invoke()
+        }
+    }
+
+    fun selectDevice(serverId: String) {
+        val selected = allCredentials.firstOrNull { it.serverId == serverId } ?: return
+        stopPolling()
+        completionTracker.clear()
+        credentials = selected
+        store.setActiveServerId(serverId)
+        _uiState.value = HarborUiState(devices = deviceSummaries())
+        _state.value = HarborConnectionState(
+            paired = true,
+            deviceName = selected.deviceName ?: Uri.parse(selected.baseUrl).host,
+        )
+        refreshWorkspaces { reconcile() }
+    }
+
+    fun removeDevice(serverId: String) {
+        allCredentials.removeAll { it.serverId == serverId }
+        if (credentials?.serverId == serverId) {
+            stopPolling()
+            completionTracker.clear()
+            credentials = allCredentials.firstOrNull()
+            store.setActiveServerId(credentials?.serverId)
+        }
+        store.saveAll(allCredentials)
+        updateDevices()
+        val active = credentials
+        _state.value = HarborConnectionState(
+            paired = active != null,
+            deviceName = active?.deviceName ?: active?.baseUrl?.let { Uri.parse(it).host },
+        )
+        if (active == null) _uiState.value = HarborUiState()
+        else refreshWorkspaces { reconcile() }
+    }
+
+    /**
+     * The workspace the user picked by touch. Voice interpretation (and with it the OpenClaw
+     * session, which is scoped per workspace) reads Harbor's own selection, so a voice request
+     * made while the activation is still in flight, or after it failed, would be interpreted
+     * for the workspace the user just left. Held until Harbor confirms it.
+     */
+    @Volatile
+    private var intendedWorkspaceId: String? = null
+
+    fun activateWorkspace(workspaceId: String) {
+        intendedWorkspaceId = workspaceId
+        mutateAndRefresh {
+            client.postActivate(requireCredentials(), workspaceId)
+            noteActivated(workspaceId)
+        }
+    }
+
+    /** Re-asserts a touch selection Harbor has not taken yet; null when nothing is outstanding. */
+    private fun settleIntendedWorkspace(creds: HarborCredentials): List<HarborWorkspace>? {
+        val intended = intendedWorkspaceId ?: return null
+        var workspaces = client.listWorkspaces(creds)
+        if (workspaces.none { it.id == intended }) {
+            intendedWorkspaceId = null
+            return workspaces
+        }
+        if (workspaces.firstOrNull { it.selected }?.id != intended) {
+            client.postActivate(creds, intended)
+            workspaces = client.listWorkspaces(creds)
+        }
+        if (workspaces.firstOrNull { it.selected }?.id == intended) intendedWorkspaceId = null
+        return workspaces
+    }
+
+    /** Records an activation that succeeded, so every screen can move to where Harbor went. */
+    private fun noteActivated(workspaceId: String) {
+        _uiState.value = _uiState.value.copy(activatedWorkspaceId = workspaceId)
+    }
+
+    fun createWorkspace(root: String?) = mutateAndRefresh {
+        client.createWorkspace(requireCredentials(), root)
+    }
+
+    fun closeWorkspace(workspaceId: String) = mutateAndRefresh {
+        client.closeWorkspace(requireCredentials(), workspaceId)
+    }
+
+    /** The workspace whose plan-approval prompt was on the last screen fetched, if any. */
+    @Volatile
+    private var planApprovalWorkspaceId: String? = null
+
+    fun loadWorkspace(workspaceId: String, lines: Int = 500) {
+        val creds = credentials ?: return
+        scope.launch(Dispatchers.IO) {
+            runCatching {
+                val tabs = client.listTabs(creds, workspaceId)
+                val screen = client.fetchScreen(creds, workspaceId, lines)
+                val cachedHints = _uiState.value.takeIf {
+                    it.selectedWorkspaceId == workspaceId && it.speechHints.isNotEmpty()
+                }?.speechHints
+                val hints = cachedHints ?: runCatching {
+                    client.fetchSpeechHints(creds, workspaceId)
+                }.getOrDefault(emptyList())
+                Triple(tabs, screen, hints)
+            }.onSuccess { (tabs, screen, hints) ->
+                _uiState.value = _uiState.value.copy(
+                    selectedWorkspaceId = workspaceId,
+                    tabs = tabs,
+                    screenText = screen.text,
+                    speechHints = hints,
+                    error = null,
+                )
+                // Once per appearance of the approval prompt, not every poll: the plan file
+                // is written before the prompt shows and does not change while it waits.
+                val approval = workspaceId.takeIf { hasClaudePlanApproval(screen.text) }
+                if (approval != null && approval != planApprovalWorkspaceId) {
+                    // A plan held from earlier may be another workspace's or an older one.
+                    _uiState.value = _uiState.value.copy(plan = null)
+                    loadWorkspacePlan(workspaceId)
+                }
+                planApprovalWorkspaceId = approval
+            }.onFailure { error ->
+                _uiState.value = _uiState.value.copy(error = error.message)
+            }
+        }
+    }
+
+    /**
+     * Fetched on demand rather than on the one-second screen poll: a plan changes when the
+     * agent writes one, not every tick, and each call is another signed request.
+     */
+    fun loadWorkspacePlan(workspaceId: String) {
+        val creds = credentials ?: return
+        _uiState.value = _uiState.value.copy(planLoading = true, planError = null)
+        scope.launch(Dispatchers.IO) {
+            runCatching { client.fetchPlan(creds, workspaceId) }
+                .onSuccess { plan ->
+                    _uiState.value = _uiState.value.copy(
+                        plan = plan,
+                        planError = null,
+                        planLoading = false,
+                    )
+                }
+                .onFailure { error ->
+                    _uiState.value = _uiState.value.copy(
+                        plan = null,
+                        planError = error.message ?: "プランを取得できませんでした。",
+                        planLoading = false,
+                    )
+                }
+        }
+    }
+
+    /**
+     * One page of the agent conversation. `before` null loads the newest page and replaces
+     * what is shown; a cursor prepends the page before it, which is how 「さらに遡る」 walks
+     * back to the instruction that produced a reply.
+     */
+    fun loadWorkspaceTranscript(workspaceId: String, before: String? = null, walked: Int = 0) {
+        val creds = credentials ?: return
+        _uiState.value = _uiState.value.copy(transcriptLoading = true, transcriptError = null)
+        scope.launch(Dispatchers.IO) {
+            runCatching { client.fetchTranscript(creds, workspaceId, before = before) }
+                .onSuccess { page ->
+                    val current = _uiState.value.let {
+                        if (it.transcriptWorkspaceId == workspaceId) {
+                            it
+                        } else {
+                            it.copy(
+                                transcript = emptyList(),
+                                transcriptWorkspaceId = workspaceId,
+                                transcriptAgent = null,
+                                transcriptHasMore = false,
+                                transcriptCursor = null,
+                            )
+                        }
+                    }
+                    if (!page.available) {
+                        _uiState.value = current.copy(
+                            transcript = if (before == null) emptyList() else current.transcript,
+                            transcriptUnavailable = page,
+                            transcriptError = null,
+                            transcriptLoading = false,
+                        )
+                        return@onSuccess
+                    }
+                    val merged = mergeHarborTranscript(current.transcript, page.messages, before)
+                    _uiState.value = current.copy(
+                        transcript = merged,
+                        transcriptAgent = page.agent ?: current.transcriptAgent,
+                        // A refresh only speaks for the newest end. Keeping the older
+                        // cursor lets the reader carry on walking back from where they
+                        // were instead of starting the history again.
+                        transcriptHasMore = if (before == null && merged.size > page.messages.size) {
+                            current.transcriptHasMore
+                        } else {
+                            page.hasMore
+                        },
+                        transcriptCursor = if (before == null && merged.size > page.messages.size) {
+                            current.transcriptCursor
+                        } else {
+                            page.nextBefore
+                        },
+                        transcriptUnavailable = null,
+                        transcriptError = null,
+                        transcriptLoading = false,
+                    )
+                    // The terminal view anchors on the last instruction. A reply longer than
+                    // a page leaves it behind the cursor, so walk back until it is loaded.
+                    val loaded = _uiState.value
+                    if (loaded.transcript.none { it.isUser && !isHarnessImageNote(it.text) } && loaded.transcriptHasMore &&
+                        walked + 1 < HARBOR_EXCHANGE_MAX_PAGES
+                    ) {
+                        loaded.transcriptCursor?.let {
+                            loadWorkspaceTranscript(workspaceId, it, walked + 1)
+                        }
+                    }
+                }
+                .onFailure { error ->
+                    _uiState.value = _uiState.value.copy(
+                        transcriptError = error.message ?: "会話を取得できませんでした。",
+                        transcriptLoading = false,
+                    )
+                }
+        }
+    }
+
+    fun createTab(workspaceId: String) = mutateWorkspace(workspaceId) {
+        client.createTab(requireCredentials(), workspaceId)
+    }
+
+    fun activateTab(workspaceId: String, tabId: String) = mutateWorkspace(workspaceId) {
+        client.activateTab(requireCredentials(), workspaceId, tabId)
+    }
+
+    fun closeTab(workspaceId: String, tabId: String) = mutateWorkspace(workspaceId) {
+        client.closeTab(requireCredentials(), workspaceId, tabId)
+    }
+
+    fun sendInstruction(workspaceId: String, text: String, submit: Boolean = true) =
+        mutateWorkspace(workspaceId) {
+            client.postInstruction(requireCredentials(), workspaceId, text, submit)
+            // The terminal view heads with the last instruction; don't leave the previous one
+            // there until the next poll.
+            if (submit) loadWorkspaceTranscript(workspaceId)
+        }
+
+    fun sendKey(workspaceId: String, key: String) = mutateWorkspace(workspaceId) {
+        client.postKey(requireCredentials(), workspaceId, key)
+    }
+
+    private fun requireCredentials(): HarborCredentials = credentials
+        ?: error("Terminal Harborをペアリングしてください")
+
+    private fun mutateAndRefresh(action: () -> Unit) {
+        scope.launch(Dispatchers.IO) {
+            _uiState.value = _uiState.value.copy(busy = true, error = null)
+            runCatching(action)
+                .onSuccess { refreshWorkspaces() }
+                .onFailure { _uiState.value = _uiState.value.copy(busy = false, error = it.message) }
+        }
+    }
+
+    private fun mutateWorkspace(workspaceId: String, action: () -> Unit) {
+        scope.launch(Dispatchers.IO) {
+            _uiState.value = _uiState.value.copy(busy = true, error = null)
+            runCatching(action)
+                .onSuccess {
+                    _uiState.value = _uiState.value.copy(busy = false)
+                    loadWorkspace(workspaceId)
+                    refreshWorkspaces()
+                }
+                .onFailure { _uiState.value = _uiState.value.copy(busy = false, error = it.message) }
+        }
+    }
+
+    fun setMode(value: InteractionMode) {
+        mode = value
+        if (value != InteractionMode.HARBOR) completionTracker.clear()
+        reconcile()
+    }
+
+    fun setG2Active(active: Boolean) {
+        // Completion audio is independent of the glasses. G2 activity only decides whether
+        // poll results are published to the plugin; Harbor mode owns the polling lifetime.
+        if (active || mode == InteractionMode.HARBOR) reconcile()
+    }
+
+    fun setPaused(value: Boolean) {
+        paused = value
+        if (value) stopPolling() else reconcile()
+    }
+
+    fun pair(rawUri: String) {
+        scope.launch(Dispatchers.IO) {
+            _state.value = _state.value.copy(error = null)
+            runCatching { client.pair(HarborPairPayload.parse(rawUri)) }
+                .onSuccess {
+                    completionTracker.clear()
+                    credentials = it
+                    allCredentials.removeAll { saved -> saved.serverId == it.serverId }
+                    allCredentials.add(it)
+                    store.saveAll(allCredentials)
+                    store.setActiveServerId(it.serverId)
+                    updateDevices()
+                    _state.value = HarborConnectionState(
+                        paired = true,
+                        connected = true,
+                        deviceName = it.deviceName ?: Uri.parse(it.baseUrl).host,
+                    )
+                    refreshWorkspaces()
+                    reconcile()
+                }
+                .onFailure {
+                    _state.value = _state.value.copy(error = it.message ?: "ペアリングに失敗しました")
+                }
+        }
+    }
+
+    fun clear() {
+        stopPolling()
+        completionTracker.clear()
+        credentials = null
+        allCredentials.clear()
+        store.clear()
+        _state.value = HarborConnectionState()
+        _uiState.value = HarborUiState()
+        if (mode == InteractionMode.HARBOR) {
+            EvenG2ReadingSession.publishHarbor(null, null, "Terminal Harborをペアリングしてください")
+        }
+    }
+
+    fun speechHints(): List<String> {
+        val creds = credentials ?: return emptyList()
+        return runCatching {
+            val workspace = client.listWorkspaces(creds).firstOrNull { it.selected } ?: return emptyList()
+            client.fetchSpeechHints(creds, workspace.id)
+        }.getOrDefault(emptyList())
+    }
+
+    fun interpretContext(): HarborInterpretContext? {
+        val creds = credentials ?: return null
+        return runCatching {
+            settleIntendedWorkspace(creds)
+            client.fetchInterpretContext(creds)
+        }.getOrNull()
+    }
+
+    fun fallbackSpokenSummary(workspaceId: String): HarborSpokenSummary? {
+        val creds = credentials ?: return null
+        return runCatching {
+            val workspace = client.listWorkspaces(creds).firstOrNull { it.id == workspaceId }
+                ?: return null
+            val view = client.fetchG2View(creds, workspaceId)
+            if (!view.summary) return null
+            HarborSpokenSummary(
+                workspaceId = workspaceId,
+                agent = workspace.completionAgent(),
+                summary = view.summaryText,
+                question = view.question,
+                options = view.options,
+            )
+        }.onFailure { Log.w(TAG, "Harbor completion fallback unavailable", it) }
+            .getOrNull()
+    }
+
+    /**
+     * Carries out the action the user already confirmed on the glass.
+     *
+     * The interpretation happened once, on the phone, with the workspace list and the
+     * agent conversation in context. Routing it through Harbor's own voice classifier
+     * afterwards could only re-decide what the user had already approved — which is how
+     * a confirmed instruction ended up switching workspaces instead of being sent.
+     */
+    fun submitCommand(
+        args: HarborCommandArgs,
+        /** Answers a read step's question from the screen and tells the user; null if not. */
+        reader: (question: String, screen: String) -> String? = { _, _ -> null },
+    ): String {
+        val creds = credentials ?: error("Terminal Harborをペアリングしてください")
+        val workspaces = client.listWorkspaces(creds)
+        val plan = planHarborSubmit(args, workspaces)
+        val completionWorkspaceIds = if (mode == InteractionMode.HARBOR) {
+            harborCompletionWorkspaceIds(plan)
+        } else {
+            emptyList()
+        }
+        val completionBaselines = completionWorkspaceIds.associateWith { workspaceId ->
+            runCatching {
+                client.fetchScreen(
+                    creds,
+                    workspaceId,
+                    lines = HARBOR_COMPLETION_FINGERPRINT_LINES,
+                ).text
+            }.map(::filterHarborDisplayText)
+                .map { it.takeLast(HarborApiClient.INTERPRET_CONTEXT_MAX_CHARS) }
+                .map { sha256Hex(it.toByteArray()) }
+                .onFailure { Log.w(TAG, "Harbor completion baseline unavailable", it) }
+                .getOrNull()
+        }
+        // A mode change only knows what it did after the fact, so it reports its own line.
+        val notes = mutableListOf<String>()
+        plan.operations.forEachIndexed { index, operation ->
+            when (operation) {
+                is HarborOperation.Activate -> {
+                    client.postActivate(creds, operation.workspaceId)
+                    intendedWorkspaceId = null
+                    // The glass follows Harbor's own selection on its next poll; the phone
+                    // screens follow their navigation state, so the switch has to be told to
+                    // them or they keep polling the workspace they were left on.
+                    noteActivated(operation.workspaceId)
+                    refreshWorkspaces()
+                }
+                is HarborOperation.Instruction -> client.postInstruction(
+                    creds,
+                    operation.workspaceId,
+                    operation.text,
+                    operation.submit,
+                )
+
+                is HarborOperation.Key ->
+                    client.postKey(creds, operation.workspaceId, operation.key)
+
+                is HarborOperation.SetMode -> notes += applyAgentMode(creds, operation)
+
+                is HarborOperation.Read -> {
+                    Thread.sleep(operation.settleMs.toLong())
+                    val screen = filterHarborDisplayText(
+                        client.fetchScreen(creds, operation.workspaceId, HARBOR_READ_SCREEN_LINES).text,
+                    )
+                    reader(operation.question, screen)?.takeIf(String::isNotBlank)?.let(notes::add)
+                }
+            }
+            // The agent redraws between keys; sending the next one into a stale screen is how
+            // a menu selection lands on the wrong row.
+            if (index < plan.operations.lastIndex) Thread.sleep(operation.waitMs.toLong())
+        }
+        val nowMs = SystemClock.elapsedRealtime()
+        completionBaselines.forEach { (workspaceId, baseline) ->
+            completionTracker.arm(workspaceId, baseline, nowMs)
+            Log.i(TAG, "Harbor completion armed: workspace=$workspaceId baseline=${baseline != null}")
+        }
+        return when {
+            notes.isEmpty() -> plan.message
+            plan.message.isBlank() -> notes.joinToString("\n")
+            else -> (listOf(plan.message) + notes).joinToString("\n")
+        }
+    }
+
+    fun onCompletionReviewResult(
+        workspaceId: String,
+        trackingId: Long,
+        fingerprint: String,
+        outcome: HarborCompletionReviewOutcome,
+    ) {
+        completionTracker.onReviewResult(
+            workspaceId,
+            trackingId,
+            fingerprint,
+            outcome,
+            SystemClock.elapsedRealtime(),
+        )
+        Log.i(TAG, "Harbor completion review: workspace=$workspaceId outcome=$outcome")
+    }
+
+    fun cancelCompletionTracking() {
+        completionTracker.clear()
+        Log.i(TAG, "Harbor completion tracking cancelled")
+    }
+
+    /**
+     * Cycles ⇧Tab to [operation]'s mode, checking the screen after each press.
+     *
+     * The count is never assumed: Claude Code's cycle skips modes the session was not started
+     * with, and the mode can have moved since whoever interpreted the request last saw it.
+     * [cycleToClaudeMode] throws rather than press on when the screen stops saying where it is,
+     * and the message names the mode actually reached — the user is left standing in it.
+     */
+    private fun applyAgentMode(
+        creds: HarborCredentials,
+        operation: HarborOperation.SetMode,
+    ): String {
+        if (isCodexAgent(operation.agent)) return applyCodexMode(creds, operation)
+        if (operation.agent?.contains("claude", ignoreCase = true) == true) {
+            return applyClaudeMode(creds, operation)
+        }
+        val screen = client.fetchScreen(
+            creds,
+            operation.workspaceId,
+            lines = MODE_SCREEN_LINES,
+        ).text
+        return when {
+            readClaudeCodeMode(screen) != null -> applyClaudeMode(creds, operation)
+            readCodexMode(screen) != null -> applyCodexMode(creds, operation)
+            else -> applyClaudeMode(creds, operation)
+        }
+    }
+
+    private fun applyCodexMode(
+        creds: HarborCredentials,
+        operation: HarborOperation.SetMode,
+    ): String {
+        val toggler = object : CodexModeToggler {
+            override fun readMode(): ClaudeCodeMode? = readCodexMode(
+                client.fetchScreen(creds, operation.workspaceId, lines = MODE_SCREEN_LINES).text,
+            )
+
+            override fun pressCycleKey() =
+                client.postKey(creds, operation.workspaceId, "shift-tab")
+
+            override fun settle() = Thread.sleep(operation.waitMs.toLong())
+        }
+        val result = cycleToCodexMode(operation.mode, toggler)
+        Log.i(
+            TAG,
+            "mode agent=codex target=${operation.mode.wire} reached=${result.mode.wire} " +
+                "presses=${result.presses}",
+        )
+        return if (result.presses == 0) {
+            "Codexはすでに${result.mode.label}モードです"
+        } else {
+            "Codexを${result.mode.label}モードにしました（Shift+Tab）"
+        }
+    }
+
+    private fun applyClaudeMode(
+        creds: HarborCredentials,
+        operation: HarborOperation.SetMode,
+    ): String {
+        val cycler = object : ClaudeModeCycler {
+            override fun readMode(): ClaudeCodeMode? = readClaudeCodeMode(
+                client.fetchScreen(creds, operation.workspaceId, lines = MODE_SCREEN_LINES).text,
+            )
+
+            override fun pressCycleKey() =
+                client.postKey(creds, operation.workspaceId, "shift-tab")
+
+            override fun settle() = Thread.sleep(operation.waitMs.toLong())
+        }
+        val result = cycleToClaudeMode(operation.mode, cycler)
+        Log.i(
+            TAG,
+            "mode target=${operation.mode.wire} reached=${result.mode.wire} " +
+                "presses=${result.presses}",
+        )
+        return if (result.presses == 0) {
+            "すでに${result.mode.label}モードです"
+        } else {
+            "${result.mode.label}モードにしました（⇧Tab ×${result.presses}）"
+        }
+    }
+
+    private fun reconcile() {
+        if (paused || mode != InteractionMode.HARBOR) {
+            stopPolling()
+            return
+        }
+        val creds = credentials
+        if (creds == null) {
+            if (EvenG2ReadingSession.isClientActive()) {
+                EvenG2ReadingSession.publishHarbor(null, null, "Terminal Harborをペアリングしてください")
+            }
+            return
+        }
+        if (job?.isActive == true) return
+        job = scope.launch(Dispatchers.IO) { poll(creds) }
+    }
+
+    private suspend fun poll(creds: HarborCredentials) {
+        var failures = 0
+        try {
+            while (
+                !paused &&
+                mode == InteractionMode.HARBOR
+            ) {
+                try {
+                    val workspace = client.listWorkspaces(creds).firstOrNull { it.selected }
+                    if (!shouldPublishHarborPoll(paused, coroutineContext.isActive)) return
+                    if (workspace == null) {
+                        _state.value = _state.value.copy(connected = true, workspaceName = null, error = null)
+                        if (EvenG2ReadingSession.isClientActive()) {
+                            EvenG2ReadingSession.publishHarbor(
+                                null,
+                                null,
+                                "選択中のワークスペースがありません",
+                            )
+                        }
+                    } else {
+                        val screen = client.fetchScreen(
+                            creds,
+                            workspace.id,
+                            lines = HARBOR_COMPLETION_FINGERPRINT_LINES,
+                        )
+                        val completionScreen = filterHarborDisplayText(screen.text)
+                            .takeLast(HarborApiClient.INTERPRET_CONTEXT_MAX_CHARS)
+                        val view = if (EvenG2ReadingSession.isClientActive()) {
+                            client.fetchG2View(creds, workspace.id)
+                        } else {
+                            null
+                        }
+                        if (!shouldPublishHarborPoll(paused, coroutineContext.isActive)) return
+                        _state.value = _state.value.copy(
+                            connected = true,
+                            workspaceName = workspace.name,
+                            error = null,
+                        )
+                        if (view?.summary == true) {
+                            val action = buildList {
+                                view.question.takeIf(String::isNotBlank)?.let(::add)
+                                addAll(view.options)
+                            }.joinToString("\n")
+                            EvenG2ReadingSession.publishHarbor(
+                                workspace.name,
+                                null,
+                                null,
+                                summaryText = view.summaryText,
+                                actionText = action,
+                            )
+                        } else if (view != null) {
+                            EvenG2ReadingSession.publishHarbor(workspace.name, view.text, null)
+                        }
+                        if (completionScreen.isNotBlank() && completionTracker.isArmed(workspace.id)) {
+                            val fingerprint = sha256Hex(completionScreen.toByteArray())
+                            val trackingId = completionTracker.observe(
+                                workspace.id,
+                                fingerprint,
+                                SystemClock.elapsedRealtime(),
+                            )
+                            if (trackingId != null) {
+                                val evidenceScreen = runCatching {
+                                    client.fetchScreen(
+                                        creds,
+                                        workspace.id,
+                                        lines = HarborApiClient.INTERPRET_CONTEXT_LINES,
+                                    )
+                                }.getOrDefault(screen)
+                                val transcript = runCatching {
+                                    client.fetchTranscript(creds, workspace.id, limit = 20)
+                                }.getOrNull()
+                                Log.i(
+                                    TAG,
+                                    "Harbor completion candidate: workspace=${workspace.id} " +
+                                        "transcript=${transcript?.available == true}",
+                                )
+                                onCompletionCandidate(
+                                    HarborCompletionCandidate(
+                                        workspaceId = workspace.id,
+                                        workspaceName = workspace.name,
+                                        agent = workspace.completionAgent(),
+                                        fingerprint = fingerprint,
+                                        screen = filterHarborDisplayText(evidenceScreen.text)
+                                            .takeLast(HarborApiClient.INTERPRET_CONTEXT_MAX_CHARS),
+                                        transcript = transcript?.takeIf { it.available }
+                                            ?.messages
+                                            ?.joinToString("\n\n") { message ->
+                                                "${message.role}: ${message.text}"
+                                            }
+                                            .orEmpty(),
+                                        trackingId = trackingId,
+                                    ),
+                                )
+                            }
+                        }
+                    }
+                    failures = 0
+                    delay(HARBOR_MIRROR_POLL_MS)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Throwable) {
+                    failures++
+                    _state.value = _state.value.copy(
+                        connected = false,
+                        error = error.message ?: "Terminal Harborに接続できません",
+                    )
+                    if (failures >= 3 && shouldPublishHarborPoll(paused, coroutineContext.isActive)) {
+                        if (EvenG2ReadingSession.isClientActive()) {
+                            EvenG2ReadingSession.publishHarbor(
+                                _state.value.workspaceName,
+                                null,
+                                "Terminal Harborに接続できません",
+                            )
+                        }
+                    }
+                    delay((1_000L shl (failures - 1).coerceAtMost(3)).coerceAtMost(10_000L))
+                }
+            }
+        } finally {
+            job = null
+        }
+    }
+
+    private fun stopPolling() {
+        job?.cancel()
+        job = null
+    }
+}
+
+/**
+ * Workspaces to watch for the agent finishing. None when the plan reads the screen itself: the
+ * user has already been told what they asked about, and a later report would say it again.
+ */
+internal fun harborCompletionWorkspaceIds(plan: HarborSubmitPlan): List<String> {
+    if (plan.operations.any { it is HarborOperation.Read }) return emptyList()
+    return plan.operations
+        .filter(::startsAgentWork)
+        .map(HarborOperation::workspaceId)
+        .distinct()
+}
+
+internal fun HarborWorkspace.completionAgent(): String? = agent ?: process
+
+private fun startsAgentWork(operation: HarborOperation): Boolean = when (operation) {
+    is HarborOperation.Instruction -> operation.submit
+    is HarborOperation.Key -> operation.key == "enter"
+    is HarborOperation.Activate, is HarborOperation.SetMode, is HarborOperation.Read -> false
+}
+
+private const val HARBOR_COMPLETION_FINGERPRINT_LINES = 60
+
+internal fun hkdfDeviceKey(
+    pairToken: String,
+    serverId: String,
+    clientId: String,
+    clientNonce: ByteArray,
+): ByteArray {
+    val prk = hmac(serverId.toByteArray(), pairToken.toByteArray())
+    val info = "terminal-harbor/device/v2\u0000".toByteArray() +
+        clientId.toByteArray() + byteArrayOf(0) + clientNonce
+    return hmac(prk, info + byteArrayOf(1)).copyOf(32)
+}
+
+private fun hmac(key: ByteArray, value: ByteArray): ByteArray =
+    Mac.getInstance("HmacSHA256").run {
+        init(SecretKeySpec(key, "HmacSHA256"))
+        doFinal(value)
+    }
+
+private fun sha256Hex(value: ByteArray): String = MessageDigest.getInstance("SHA-256")
+    .digest(value).joinToString("") { "%02x".format(it) }
+
+private fun b64(value: ByteArray): String =
+    Base64.encodeToString(value, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
+
+private fun b64Decode(value: String): ByteArray =
+    Base64.decode(value, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)

@@ -37,7 +37,7 @@ LLM ではなく応答先なので、モードがONの間だけ音声・チャ�
 
 ### Harborモード
 
-Voice HarnessはTerminal Harborの `harbor://pair` URIからHMAC鍵を導出し、認証済みの
+Voice ClaspはTerminal Harborの `harbor://pair` URIからHMAC鍵を導出し、認証済みの
 `GET /v1/workspaces` と `POST /v1/workspaces/{id}/g2-view` を使用する。Macで
 `selected=true` のワークスペースを1秒周期で追従する。画面変化中は空白行・罫線・点線だけの
 行を除いた直近60行を返し、Even Hub側が実ピクセル幅で折返しを測ってG2に収まる最長の末尾を
@@ -202,7 +202,7 @@ Harbor 待機中（確認待ちでも要約・質問の表示でもない）の 
 | `GET /api/v1/double-tap` | 診断用ダブルタップカウンタ |
 
 プラグイン手順は [`even-g2/app/README.md`](../even-g2/app/README.md)
-（Even Hub 表示名: Voice Harness、`package_id`: `com.g150446.voiceharness.g2`）。
+（Even Hub 表示名: Voice Clasp、`package_id`: `com.g150446.voiceclasp.g2`）。
 開発用 QR/URL プロトタイプや Vite を使い終わったら必ず終了すること。放置すると
 Even Realities App と G2 の接続が不安定になることがある（同 README「グラス切断を防ぐ」）。
 
@@ -252,9 +252,9 @@ Z100を選択しても返答は電話画面と履歴へ残る。グラス表示�
 - Vuzix Connectアプリ
 - Vuzix Connectでリンク・接続済みのVuzix Z100
 - `com.vuzix:ultralite-sdk-android:1.9`
-- Kindleの自動ページ送りを使う場合は、Android設定でVoice HarnessのAccessibility Serviceを有効化
+- Kindleの自動ページ送りを使う場合は、Android設定でVoice ClaspのAccessibility Serviceを有効化
 
-Voice HarnessからZ100へ直接BLE接続しない。リンク、接続、他アプリとの制御調停は
+Voice ClaspからZ100へ直接BLE接続しない。リンク、接続、他アプリとの制御調停は
 Vuzix ConnectとUltralite SDKへ任せる。
 
 ## UIと永続設定
@@ -313,7 +313,7 @@ Android画面上の行数では分割しない。各描画時にステータス�
 
 ## 中断と制御解放
 
-Z100は複数アプリが制御を要求できるため、Voice Harnessは常時制御を保持しない。
+Z100は複数アプリが制御を要求できるため、Voice Claspは常時制御を保持しない。
 
 - 新しいAI返答: 古い表示を全文で置き換える
 - 表示成功から12秒後: 読み取り猶予のあと自動で表示消去と制御解放
@@ -358,7 +358,7 @@ Response routed to Z100
 ## 実機確認
 
 1. Vuzix ConnectでZ100をリンク・接続する
-2. Voice Harnessで出力先をZ100にする
+2. Voice Claspで出力先をZ100にする
 3. HarnessNodeから短文を3回入力する
 4. Z100に全文が一度に表示され、TTSが鳴らず、電話画面と履歴に返答が残ることを確認する
 5. 長めの質問を1回行い、文字が自動スクロールしないことを確認する

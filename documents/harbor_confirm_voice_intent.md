@@ -122,10 +122,10 @@ Harbor の `handle_voice_intent` は、分類器が `unsupported` を返して�
 
 ```
 STT : 整理してコミットして、プッシュもして。
-送信: はい。両リポジトリ（voice-harness-even-g2 と terminal-harbor）を整理して…
+送信: はい。両リポジトリ（voice-clasp-even-g2 と terminal-harbor）を整理して…
 ```
 
-が「voice-harness-even-g2 に切り替えました」に化けた。**ユーザーが承認した指示が破棄される。**
+が「voice-clasp-even-g2 に切り替えました」に化けた。**ユーザーが承認した指示が破棄される。**
 
 Harbor 側は2段階で絞り込んだ（配置済み）:
 
@@ -154,7 +154,7 @@ Harbor 側の解析だけで **6.4秒**。ユーザーは既に承認してい�
 ### プロンプトは実測で詰めた
 
 最初の版では実モデル（`~deepseek/deepseek-v4-flash-latest`）が
-「voice-harness-even-g2 と terminal-harbor の両方を整理してコミットして」を
+「voice-clasp-even-g2 と terminal-harbor の両方を整理してコミットして」を
 `switch_workspace` と判定し、**Harbor側と同じ誤りをアプリ側で再現**した。
 「切り替えが要求のすべてで、着いた後に何もすることがない場合だけ switch」
 「作業依頼ならワークスペース名を含んでいても instruction」と、誤爆した実例そのものを

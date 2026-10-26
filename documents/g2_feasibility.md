@@ -5,7 +5,7 @@
 > Z100 の `SmartGlassesOutputManager` は実行パスから外し、コード/SDK依存のみ残置。
 
 > 調査日: 2026-08-16  
-> 対象: 現行 Voice Harness の Vuzix Z100 出力機能を、Even Realities G2 公開SDKで同等実現できるか
+> 対象: 現行 Voice Clasp の Vuzix Z100 出力機能を、Even Realities G2 公開SDKで同等実現できるか
 
 ## 結論
 
@@ -144,7 +144,7 @@ HarnessNode → BLE PCM → ASR → Chat → response
 | バックグラウンド中の表示トリガ | Android WebView は suspend され得る | **要対策（最大リスク）** |
 | HarnessNode BLE共存 | G2も電話BLE経由 | **要再検証** |
 
-表示APIの不足（フォント・中央揃え・アニメ等）は、**現行 Voice Harness のZ100利用範囲には不要**。
+表示APIの不足（フォント・中央揃え・アニメ等）は、**現行 Voice Clasp のZ100利用範囲には不要**。
 
 ### 3.1 G2 テキスト表示の制約（仕様）
 
@@ -196,7 +196,7 @@ Even G2 (表示 + 入力)
 ### 4.3 移植時に必要な形
 
 ```text
-HarnessNode ──BLE──▶ Voice Harness (native FGS)
+HarnessNode ──BLE──▶ Voice Clasp (native FGS)
                          │ ASR → Chat → presentResponse
                          │
                          │ localhost HTTP / WebSocket 等
@@ -222,7 +222,7 @@ HarnessNode ──BLE──▶ Voice Harness (native FGS)
 4. （任意）接続/装着/電池を `getDeviceInfo` / `onDeviceStatusChanged` で監視し native へ返す
 5. （任意）長文は分割表示やスワイプページング（ファームウェアスクロールに任せる案もあり）
 
-### 5.2 Voice Harness（native）
+### 5.2 Voice Clasp（native）
 
 1. `SmartGlassesOutputManager` を **G2アダプタ**に差し替え  
    公開契約は維持: `displayResponse` / `stopDisplay` / `close` / `state`
@@ -256,7 +256,7 @@ Z100実装とG2実装を差し替え可能にし、ルーティング層（`Voic
 
 ### 6.1 バックグラウンド（最重要）
 
-Voice Harness は FGS で返答を出すが、G2表示は **Even App の WebView** 経由。
+Voice Clasp は FGS で返答を出すが、G2表示は **Even App の WebView** 経由。
 
 公式ドキュメント上、Android では Even App がバックグラウンドに入ると Chromium WebView が **suspend され得る**。その場合:
 
@@ -305,7 +305,7 @@ G2 でも同様の方針を踏襲し、条件別受け入れ試験が必要。
 ### 6.5 運用・UX
 
 - Even Realities App のインストールとG2ペアリングが必須
-- プラグインの配布・更新が Voice Harness APK と別系統
+- プラグインの配布・更新が Voice Clasp APK と別系統
 - ユーザ手順が「Vuzix Connect」から「Even App + プラグイン」に変わる
 - 状態モデル（available/linked/connected/controlled）の意味が1対1対応しない
 
@@ -313,7 +313,7 @@ G2 でも同様の方針を踏襲し、条件別受け入れ試験が必要。
 
 ## 7. 現行機能に不要な「Z100 ○ / G2 ×」
 
-一般比較で差が大きい項目のうち、**現行 Voice Harness では未使用**のため移植ブロッカーにならないもの:
+一般比較で差が大きい項目のうち、**現行 Voice Clasp では未使用**のため移植ブロッカーにならないもの:
 
 1. ネイティブAndroid SDKとして同一APKに組み込める ← **実行モデルとしては最大差だが、ブリッジで迂回する**
 2. フォント family/style/size
@@ -366,7 +366,7 @@ Z100時の試験（`smart_glasses_output.md` / `ble_audio_reliability.md`）を�
 ### 表示・フォールバック
 
 1. Even App でG2を接続し、プラグインを起動
-2. Voice Harness で出力先をグラスにする
+2. Voice Clasp で出力先をグラスにする
 3. 短文を3回入力 → G2に表示、TTSなし、電話画面と履歴に残る
 4. 長文1回 → 文字量・スクロール挙動が許容範囲か
 5. G2切断またはプラグイン停止 → 警告後TTS

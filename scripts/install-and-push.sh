@@ -21,9 +21,9 @@ echo ""
 echo "Launching app..."
 SERIAL="$(adb devices -l | awk '/device usb:/{print $1; exit}')"
 if [[ -n "${SERIAL:-}" ]]; then
-  adb -s "$SERIAL" shell am start -n com.g150446.voiceharness/.MainActivity
+  adb -s "$SERIAL" shell am start -n com.g150446.voiceclasp/.MainActivity
 else
-  adb shell am start -n com.g150446.voiceharness/.MainActivity
+  adb shell am start -n com.g150446.voiceclasp/.MainActivity
 fi
 
 echo ""

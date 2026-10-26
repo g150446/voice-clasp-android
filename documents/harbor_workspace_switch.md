@@ -84,7 +84,7 @@ motorola razr 50s + Even G2 で確認済み。ワークスペース詳細画面�
 
 ## 6. 調査に使ったもの
 
-- `adb shell run-as com.g150446.voiceharness cat …/shared_prefs/voice_history_prefs.xml`
+- `adb shell run-as com.g150446.voiceclasp cat …/shared_prefs/voice_history_prefs.xml`
   — ログに出ない送信内容と結果が全部ある。**logcat より先にこれを見る。**
   リングバッファは既定 256 KiB で数分で流れるが、履歴は残る。
 - tailscale 経由の adb は direct 経路が張れていれば 144MB の debug APK を約1分半で入れられた

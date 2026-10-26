@@ -46,7 +46,7 @@ ASR 単体は Gemma 実測（約 4.3–5.0 s）と同程度。E2E の半分は�
 `/data/local/tmp/` に配置済み。GGUF 到着後:
 
 ```bash
-export LD_LIBRARY_PATH=/data/local/tmp:/data/app/~~…/com.g150446.voiceharness-…/lib/arm64
+export LD_LIBRARY_PATH=/data/local/tmp:/data/app/~~…/com.g150446.voiceclasp-…/lib/arm64
 /data/local/tmp/llama-cli -m LFM2.5-2.6B-Q4_K_M.gguf -c 2048 -n 64 -t 4 -ngl 0 \
   --chat-template-kwargs '{"enable_thinking":false}' \
   -p 'Reply in Japanese in one short sentence. 東京都は日本の首都ですか？'

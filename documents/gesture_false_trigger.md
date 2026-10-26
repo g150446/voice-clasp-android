@@ -59,7 +59,7 @@
 通過条件にする。これは履歴100件中の英語書き起こし9種がすべて非依頼の幻聴であり、
 実際の英語依頼が0件だったという運用データに基づく。
 
-判定順（`app/src/main/java/com/g150446/voiceharness/UtteranceIntentGate.kt`）:
+判定順（`app/src/main/java/com/g150446/voiceclasp/UtteranceIntentGate.kt`）:
 
 1. 依頼形・疑問形・アプリコマンド語・会話リセット句 → **無条件 PASS**。
    `ですか` は疑問形に含めるが `です` は含めない（「お疲れ様です」を通してしまうため）。
@@ -231,7 +231,7 @@ Phase 3 の分類器には**ラベル付きの生 IMU が要る**。FW 側の軌
 4. CSV を吸い出す:
 
 ```bash
-adb -s <device> exec-out run-as com.g150446.voiceharness \
+adb -s <device> exec-out run-as com.g150446.voiceclasp \
   tar c files/gesture_trajectories > trajectories.tar
 tar tvf trajectories.tar    # 中身を確認してから展開する
 ```

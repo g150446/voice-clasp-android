@@ -1,0 +1,755 @@
+package com.g150446.voiceclasp
+
+import android.net.Uri
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.g150446.voiceclasp.ui.theme.HarnessVoiceTheme
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+class GroqSettingsActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        ModelManager.migrateBackendSplitIfNeeded(this)
+        ModelManager.refresh(this)
+        setContent {
+            HarnessVoiceTheme {
+                Scaffold { padding ->
+                    ModelSettingsScreen(modifier = Modifier.padding(padding))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ModelSettingsScreen(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val status by ModelManager.status.collectAsState()
+    var actionStatus by remember { mutableStateOf("") }
+    var importing by remember { mutableStateOf(false) }
+    var importSlot by remember { mutableStateOf<ModelSlot?>(null) }
+    var sttBackend by remember { mutableStateOf(ModelManager.currentSttBackend(context)) }
+    var llmBackend by remember { mutableStateOf(ModelManager.currentLlmBackend(context)) }
+    var openRouterModels by remember { mutableStateOf<List<OpenRouterModel>>(emptyList()) }
+    var modelQuery by remember { mutableStateOf("") }
+    var selectedOpenRouterModel by remember {
+        mutableStateOf(OpenRouterPrefs.getModelId(context))
+    }
+
+    val pickModelLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri == null) {
+            actionStatus = "キャンセルしました"
+            return@rememberLauncherForActivityResult
+        }
+        importing = true
+        actionStatus = "取り込み中..."
+        val slot = importSlot
+        scope.launch {
+            val result = ModelManager.importFromUri(context.applicationContext, uri, slot)
+            importing = false
+            importSlot = null
+            actionStatus = if (result.isSuccess) {
+                val file = result.getOrThrow()
+                "取り込み完了: ${file.name} (${ModelManager.formatSize(file.length())})"
+            } else {
+                "取り込み失敗: ${result.exceptionOrNull()?.message ?: "不明なエラー"}"
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        ModelManager.refresh(context)
+        sttBackend = ModelManager.currentSttBackend(context)
+        llmBackend = ModelManager.currentLlmBackend(context)
+        val cached = OpenRouterPrefs.getModelsCacheJson(context)
+        if (cached != null) {
+            openRouterModels = OpenRouterModelCatalog.parseModelsJson(cached)
+        }
+    }
+
+    val canLoad = !importing && status.readiness != ModelReadiness.MISSING &&
+        status.readiness != ModelReadiness.LOADING
+
+    Column(
+        modifier = modifier
+            .padding(16.dp)
+            .verticalScroll(rememberScrollState())
+    ) {
+        Text("モデル設定", fontSize = 18.sp)
+        Spacer(modifier = Modifier.height(8.dp))
+        Text("現在の選択", fontSize = 14.sp)
+        Text(
+            "ASR: ${ModelDisplayIds.sttLabel(context)}",
+            fontSize = 13.sp,
+            modifier = Modifier.padding(top = 4.dp),
+        )
+        Text(
+            "LLM: ${ModelDisplayIds.llmLabel(context)}",
+            fontSize = 13.sp,
+            modifier = Modifier.padding(top = 2.dp, bottom = 4.dp),
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Text("音声認識 (ASR)", fontSize = 15.sp)
+        SttBackendId.entries.forEach { backend ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .selectable(
+                        selected = sttBackend == backend,
+                        onClick = {
+                            BleConnectionService.switchSttBackend(context, backend)
+                            sttBackend = backend
+                            ModelManager.refresh(context)
+                            actionStatus = "ASR: ${backend.displayName}"
+                        }
+                    )
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                RadioButton(
+                    selected = sttBackend == backend,
+                    onClick = {
+                        BleConnectionService.switchSttBackend(context, backend)
+                        sttBackend = backend
+                        ModelManager.refresh(context)
+                        actionStatus = "ASR: ${backend.displayName}"
+                    }
+                )
+                Text(backend.displayName, fontSize = 14.sp)
+            }
+        }
+        Text(
+            "ASR 状態: ${ModelManager.readinessLabel(status.readiness)} / Load ${status.lastLoadMs} ms / ASR ${status.lastAsrMs} ms",
+            fontSize = 12.sp,
+            modifier = Modifier.padding(top = 4.dp)
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+        Text("応答モデル (LLM)", fontSize = 15.sp)
+        LlmBackendId.entries.forEach { backend ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .selectable(
+                        selected = llmBackend == backend,
+                        onClick = {
+                            BleConnectionService.switchLlmBackend(context, backend)
+                            llmBackend = backend
+                            ModelManager.refresh(context)
+                            actionStatus = "LLM: ${backend.displayName}"
+                        }
+                    )
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                RadioButton(
+                    selected = llmBackend == backend,
+                    onClick = {
+                        BleConnectionService.switchLlmBackend(context, backend)
+                        llmBackend = backend
+                        ModelManager.refresh(context)
+                        actionStatus = "LLM: ${backend.displayName}"
+                    }
+                )
+                Text(backend.displayName, fontSize = 14.sp)
+            }
+        }
+        Text(
+            "LLM Chat: ${status.lastChatMs} ms / TTFT ${status.lastChatTtftMs} ms",
+            fontSize = 12.sp,
+            modifier = Modifier.padding(top = 4.dp)
+        )
+
+        if (sttBackend == SttBackendId.GROQ || llmBackend == LlmBackendId.GROQ) {
+            Spacer(modifier = Modifier.height(16.dp))
+            Text("Groq API キー", fontSize = 14.sp)
+            var apiKey by remember { mutableStateOf(GroqPrefs.getApiKey(context)) }
+            OutlinedTextField(
+                value = apiKey,
+                onValueChange = { apiKey = it },
+                label = { Text("GROQ_API_KEY") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation()
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Button(
+                onClick = {
+                    GroqPrefs.setApiKey(context, apiKey)
+                    ModelManager.refresh(context)
+                    actionStatus = if (apiKey.isBlank()) "API キーをクリアしました" else "API キーを保存しました"
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Groq API キーを保存") }
+        }
+
+        if (llmBackend == LlmBackendId.OPENROUTER || sttBackend == SttBackendId.OPENROUTER) {
+            Spacer(modifier = Modifier.height(16.dp))
+            Text("OpenRouter", fontSize = 14.sp)
+            var orKey by remember { mutableStateOf(OpenRouterPrefs.getApiKey(context)) }
+            OutlinedTextField(
+                value = orKey,
+                onValueChange = { orKey = it },
+                label = { Text("OPENROUTER_API_KEY") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation()
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Button(
+                onClick = {
+                    OpenRouterPrefs.setApiKey(context, orKey)
+                    actionStatus = if (orKey.isBlank()) {
+                        "OpenRouter キーをクリアしました"
+                    } else {
+                        "OpenRouter キーを保存しました"
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("OpenRouter API キーを保存") }
+
+            if (sttBackend == SttBackendId.OPENROUTER) {
+                var sttModel by remember { mutableStateOf(OpenRouterPrefs.getSttModelId(context)) }
+                var sttModels by remember { mutableStateOf<List<OpenRouterModel>>(emptyList()) }
+                Spacer(modifier = Modifier.height(12.dp))
+                Text("音声認識モデル (OpenRouter STT)", fontSize = 14.sp)
+                Text("選択中: $sttModel", fontSize = 13.sp, modifier = Modifier.padding(vertical = 4.dp))
+                OpenRouterSttBackend.RECOMMENDED.forEach { (id, note) ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .selectable(
+                                selected = sttModel == id,
+                                onClick = {
+                                    sttModel = id
+                                    OpenRouterPrefs.setSttModelId(context, id)
+                                    actionStatus = "ASRモデル: $id"
+                                }
+                            )
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = sttModel == id,
+                            onClick = {
+                                sttModel = id
+                                OpenRouterPrefs.setSttModelId(context, id)
+                                actionStatus = "ASRモデル: $id"
+                            }
+                        )
+                        Column {
+                            Text(id, fontSize = 13.sp)
+                            Text(note, fontSize = 11.sp)
+                        }
+                    }
+                }
+                OutlinedButton(
+                    onClick = {
+                        actionStatus = "STTモデル一覧を取得中..."
+                        scope.launch {
+                            val result = OpenRouterSttBackend(context.applicationContext).fetchModels()
+                            if (result.isSuccess) {
+                                sttModels = result.getOrThrow()
+                                actionStatus = "STTモデル ${sttModels.size} 件を取得"
+                            } else {
+                                actionStatus = "取得失敗: ${result.exceptionOrNull()?.message}"
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("OpenRouterのSTTモデル一覧を取得") }
+                sttModels
+                    .filter { model -> OpenRouterSttBackend.RECOMMENDED.none { it.first == model.id } }
+                    .take(40)
+                    .forEach { model ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .selectable(
+                                    selected = sttModel == model.id,
+                                    onClick = {
+                                        sttModel = model.id
+                                        OpenRouterPrefs.setSttModelId(context, model.id)
+                                        actionStatus = "ASRモデル: ${model.id}"
+                                    }
+                                )
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = sttModel == model.id,
+                                onClick = {
+                                    sttModel = model.id
+                                    OpenRouterPrefs.setSttModelId(context, model.id)
+                                    actionStatus = "ASRモデル: ${model.id}"
+                                }
+                            )
+                            Column {
+                                Text(model.name, fontSize = 13.sp)
+                                Text(model.id, fontSize = 11.sp)
+                            }
+                        }
+                    }
+            }
+
+            if (llmBackend == LlmBackendId.OPENROUTER) {
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedTextField(
+                value = modelQuery,
+                onValueChange = { modelQuery = it },
+                label = { Text("モデル検索") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = {
+                    actionStatus = "モデル一覧を更新中..."
+                    scope.launch {
+                        val backend = OpenRouterLlmBackend(context.applicationContext)
+                        val result = backend.fetchModels(forceRefresh = true)
+                        if (result.isSuccess) {
+                            openRouterModels = result.getOrThrow()
+                            actionStatus = "モデル ${openRouterModels.size} 件を取得"
+                        } else {
+                            actionStatus = "更新失敗: ${result.exceptionOrNull()?.message}"
+                            val cached = OpenRouterPrefs.getModelsCacheJson(context)
+                            if (cached != null) {
+                                openRouterModels = OpenRouterModelCatalog.parseModelsJson(cached)
+                            }
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("モデル一覧を更新") }
+
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                buildString {
+                    append("選択中: ")
+                    append(selectedOpenRouterModel.ifBlank { "未選択" })
+                    val selected = openRouterModels.firstOrNull { it.id == selectedOpenRouterModel }
+                    if (selected != null) {
+                        val badges = buildList {
+                            if (selected.isFree) add("無料")
+                            if (selected.supportsImage) add("画像")
+                            if (selected.supportsTools) add("tools")
+                        }
+                        if (badges.isNotEmpty()) {
+                            append("  [")
+                            append(badges.joinToString(" · "))
+                            append("]")
+                        }
+                    }
+                },
+                fontSize = 13.sp,
+                modifier = Modifier.padding(bottom = 4.dp),
+            )
+
+            val filtered = OpenRouterModelCatalog.filter(openRouterModels, modelQuery).take(40)
+            filtered.forEach { model ->
+                val badges = buildList {
+                    if (model.isFree) add("無料")
+                    if (model.supportsImage) add("画像")
+                    if (model.supportsTools) add("tools")
+                }.joinToString(" · ")
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .selectable(
+                            selected = selectedOpenRouterModel == model.id,
+                            onClick = {
+                                selectedOpenRouterModel = model.id
+                                OpenRouterPrefs.setModelId(context, model.id)
+                                actionStatus = "選択: ${model.id}"
+                            }
+                        )
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    RadioButton(
+                        selected = selectedOpenRouterModel == model.id,
+                        onClick = {
+                            selectedOpenRouterModel = model.id
+                            OpenRouterPrefs.setModelId(context, model.id)
+                            actionStatus = "選択: ${model.id}"
+                        }
+                    )
+                    Column {
+                        Text(model.name, fontSize = 13.sp)
+                        Text(
+                            buildString {
+                                append(model.id)
+                                if (badges.isNotEmpty()) append("  [$badges]")
+                            },
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+            }
+            if (selectedOpenRouterModel.isNotBlank() &&
+                openRouterModels.isNotEmpty() &&
+                openRouterModels.none { it.id == selectedOpenRouterModel }
+            ) {
+                Text(
+                    "選択中のモデルが一覧にありません。再選択してください。",
+                    fontSize = 12.sp,
+                    color = androidx.compose.ui.graphics.Color.Red
+                )
+            }
+            }
+        }
+
+        // OpenClaw is a destination (interaction mode), not an LLM, so it has its own section.
+        run {
+            Spacer(modifier = Modifier.height(24.dp))
+            Text("OpenClaw（応答先。LLM とは別）", fontSize = 16.sp)
+            Text(
+                "ホームの操作モードで OpenClaw を選ぶと、音声・チャットの送信先が OpenClaw になります。",
+                fontSize = 11.sp,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text("OpenClaw Gateway", fontSize = 14.sp)
+            Text(
+                "Gateway は公開せず、Mac のローカルネットワークまたは tailnet 内だけで使用してください。",
+                fontSize = 11.sp,
+            )
+            var gatewayUrl by remember { mutableStateOf(OpenClawPrefs.getBaseUrl(context)) }
+            var gatewayToken by remember { mutableStateOf(OpenClawPrefs.getToken(context)) }
+            var chatAgent by remember { mutableStateOf(OpenClawPrefs.getAgent(context)) }
+            var harborAgent by remember { mutableStateOf(OpenClawPrefs.getHarborAgent(context)) }
+            OutlinedTextField(
+                value = gatewayUrl,
+                onValueChange = { gatewayUrl = it },
+                label = { Text("Gateway URL") },
+                supportingText = { Text("例: http://MacのTailscale-IP:18789") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedTextField(
+                value = gatewayToken,
+                onValueChange = { gatewayToken = it },
+                label = { Text("Gateway token / password") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedTextField(
+                value = chatAgent,
+                onValueChange = { chatAgent = it },
+                label = { Text("OpenClaw エージェント") },
+                supportingText = {
+                    Text(
+                        "Gateway で複数の agent を運用している場合は openclaw/main のように " +
+                            "名前で指定してください（fleet には既定の agent がありません）。" +
+                            "単一 agent なら ${OpenClawPrefs.DEFAULT_AGENT} のままで動きます。",
+                    )
+                },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedTextField(
+                value = harborAgent,
+                onValueChange = { harborAgent = it },
+                label = { Text("Terminal Harbor 解釈エージェント") },
+                supportingText = {
+                    Text(
+                        "Harbor モードの音声を解釈する agent target。実行はアプリ側のタップ確認のままです。" +
+                            "既定は ${OpenClawPrefs.DEFAULT_HARBOR_AGENT}。",
+                    )
+                },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Button(
+                onClick = {
+                    OpenClawPrefs.setBaseUrl(context, gatewayUrl)
+                    OpenClawPrefs.setToken(context, gatewayToken)
+                    OpenClawPrefs.setAgent(context, chatAgent)
+                    OpenClawPrefs.setHarborAgent(context, harborAgent)
+                    actionStatus = if (gatewayToken.isBlank()) {
+                        "OpenClaw token をクリアしました"
+                    } else {
+                        "OpenClaw 設定を保存しました"
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("OpenClaw 設定を保存") }
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = {
+                    OpenClawPrefs.setBaseUrl(context, gatewayUrl)
+                    OpenClawPrefs.setToken(context, gatewayToken)
+                    // Saved first so the check exercises the agents that are typed in.
+                    OpenClawPrefs.setAgent(context, chatAgent)
+                    OpenClawPrefs.setHarborAgent(context, harborAgent)
+                    actionStatus = "OpenClaw 接続確認中..."
+                    scope.launch {
+                        val backend = OpenClawLlmBackend(context.applicationContext)
+                        val result = backend.testConnection()
+                        backend.release()
+                        actionStatus = result.fold(
+                            onSuccess = { it },
+                            onFailure = { "接続失敗: ${it.message ?: "不明なエラー"}" },
+                        )
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("OpenClaw 接続確認") }
+            Spacer(modifier = Modifier.height(8.dp))
+            var selectedSession by remember { mutableStateOf(OpenClawPrefs.getSelectedSessionKey(context)) }
+            var sessionChoices by remember { mutableStateOf<List<OpenClawSessionInfo>?>(null) }
+            Text(
+                "会話セッション: ${selectedSession ?: "アプリ専用 (${OpenClawPrefs.getOrCreateSessionKey(context)})"}",
+                fontSize = 11.sp,
+            )
+            OutlinedButton(
+                onClick = {
+                    OpenClawPrefs.setBaseUrl(context, gatewayUrl)
+                    OpenClawPrefs.setToken(context, gatewayToken)
+                    actionStatus = "OpenClaw セッション取得中..."
+                    scope.launch {
+                        val backend = OpenClawLlmBackend(context.applicationContext)
+                        val result = backend.listSessions()
+                        backend.release()
+                        result.fold(
+                            onSuccess = {
+                                actionStatus = ""
+                                sessionChoices = it
+                            },
+                            onFailure = { actionStatus = "セッション取得失敗: ${it.message ?: "不明なエラー"}" },
+                        )
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("会話セッションを選択（ブラウザと共有）") }
+            sessionChoices?.let { choices ->
+                AlertDialog(
+                    onDismissRequest = { sessionChoices = null },
+                    title = { Text("OpenClaw セッション") },
+                    text = {
+                        Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                            TextButton(
+                                onClick = {
+                                    OpenClawPrefs.setSelectedSessionKey(context, null)
+                                    selectedSession = null
+                                    sessionChoices = null
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { Text("アプリ専用セッションに戻す") }
+                            if (choices.isEmpty()) Text("選択できるセッションがありません。", fontSize = 12.sp)
+                            choices.forEach { session ->
+                                TextButton(
+                                    onClick = {
+                                        OpenClawPrefs.setSelectedSessionKey(context, session.key)
+                                        selectedSession = session.key
+                                        sessionChoices = null
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Column(modifier = Modifier.fillMaxWidth()) {
+                                        Text(session.title, fontSize = 13.sp)
+                                        Text(session.key, fontSize = 10.sp)
+                                        if (session.preview.isNotBlank()) {
+                                            Text(session.preview.take(80), fontSize = 10.sp)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { sessionChoices = null }) { Text("閉じる") }
+                    },
+                )
+            }
+        }
+
+        if (sttBackend == SttBackendId.GEMMA || sttBackend == SttBackendId.QWEN ||
+            llmBackend == LlmBackendId.GEMMA || llmBackend == LlmBackendId.QWEN
+        ) {
+            Spacer(modifier = Modifier.height(16.dp))
+            Text("ASR ベース言語", fontSize = 14.sp)
+            var speechBaseLanguage by remember {
+                mutableStateOf(ModelManager.currentSpeechBaseLanguage(context))
+            }
+            SpeechBaseLanguage.entries.forEach { language ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .selectable(
+                            selected = speechBaseLanguage == language,
+                            onClick = {
+                                ModelManager.setSpeechBaseLanguage(context, language)
+                                speechBaseLanguage = language
+                                actionStatus = "ASR ベース言語: ${language.displayName}"
+                            }
+                        )
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    RadioButton(
+                        selected = speechBaseLanguage == language,
+                        onClick = {
+                            ModelManager.setSpeechBaseLanguage(context, language)
+                            speechBaseLanguage = language
+                            actionStatus = "ASR ベース言語: ${language.displayName}"
+                        }
+                    )
+                    Column(modifier = Modifier.padding(start = 4.dp)) {
+                        Text(language.displayName, fontSize = 14.sp)
+                        Text(language.description, fontSize = 11.sp)
+                    }
+                }
+            }
+
+            if (sttBackend == SttBackendId.GEMMA || llmBackend == LlmBackendId.GEMMA) {
+                Spacer(modifier = Modifier.height(16.dp))
+                var mtpEnabled by remember {
+                    mutableStateOf(ModelManager.isSpeculativeDecodingEnabled(context))
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("MTP / 投機的デコード（Gemma）", fontSize = 14.sp)
+                        Text("切り替えるとモデルを再読み込みします。", fontSize = 11.sp)
+                    }
+                    Switch(
+                        checked = mtpEnabled,
+                        onCheckedChange = { next ->
+                            ModelManager.setSpeculativeDecodingEnabled(context, next)
+                            mtpEnabled = next
+                            BleConnectionService.reloadOnDeviceBackend(context)
+                            actionStatus = if (next) "MTP ON" else "MTP OFF"
+                        }
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+        var debugPipelineTiming by remember {
+            mutableStateOf(ModelManager.isDebugPipelineTimingEnabled(context))
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("処理時間を表示（デバッグ）", fontSize = 14.sp)
+            }
+            Switch(
+                checked = debugPipelineTiming,
+                onCheckedChange = { next ->
+                    ModelManager.setDebugPipelineTimingEnabled(context, next)
+                    debugPipelineTiming = next
+                }
+            )
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+        Text(status.message, fontSize = 13.sp)
+        if (!sttBackend.isCloud || !llmBackend.isCloud) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Text("Gemma: ${slotLabel(status.gemma)}", fontSize = 12.sp)
+            Text("LFM Chat: ${slotLabel(status.lfmChat)}", fontSize = 12.sp)
+            Text("Qwen ASR decoder: ${slotLabel(status.qwenAsrDecoder)}", fontSize = 12.sp)
+            Text("Qwen ASR projector: ${slotLabel(status.qwenAsrProjector)}", fontSize = 12.sp)
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+        if (!sttBackend.isCloud || llmBackend == LlmBackendId.GEMMA || llmBackend == LlmBackendId.QWEN) {
+            Button(
+                onClick = {
+                    importSlot = when {
+                        sttBackend == SttBackendId.GEMMA || llmBackend == LlmBackendId.GEMMA ->
+                            ModelSlot.GEMMA
+                        else -> ModelSlot.LFM_CHAT
+                    }
+                    pickModelLauncher.launch(arrayOf("application/octet-stream", "*/*"))
+                },
+                enabled = !importing,
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("モデルを取り込む") }
+
+            Spacer(modifier = Modifier.height(8.dp))
+            Button(
+                onClick = {
+                    actionStatus = "読み込み中..."
+                    scope.launch {
+                        ModelManager.refresh(context)
+                        val facade = OnDeviceAiFacade(context.applicationContext)
+                        val result = withContext(Dispatchers.IO) { facade.ensureReady() }
+                        facade.release()
+                        actionStatus = if (result.isSuccess) {
+                            "準備確認OK（${ModelManager.status.value.lastLoadMs} ms）"
+                        } else {
+                            "失敗: ${result.exceptionOrNull()?.message ?: "不明なエラー"}"
+                        }
+                    }
+                },
+                enabled = canLoad || llmBackend == LlmBackendId.OPENROUTER ||
+                    sttBackend == SttBackendId.GROQ || llmBackend == LlmBackendId.GROQ,
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("モデルを読み込む / 接続確認") }
+        }
+
+        if (actionStatus.isNotEmpty()) {
+            Text(actionStatus, modifier = Modifier.padding(top = 12.dp), fontSize = 13.sp)
+        }
+    }
+}
+
+private fun slotLabel(slot: SlotStatus): String {
+    val state = ModelManager.readinessLabel(slot.readiness)
+    val name = slot.fileName ?: "-"
+    val size = if (slot.sizeBytes > 0) ModelManager.formatSize(slot.sizeBytes) else "-"
+    return "$state ($name, $size)"
+}

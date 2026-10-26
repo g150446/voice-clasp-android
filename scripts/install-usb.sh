@@ -44,12 +44,12 @@ if [[ ! -f "$APK" ]]; then
 fi
 
 echo "Force-stopping old process..."
-adb -s "$SERIAL" shell am force-stop com.g150446.voiceharness >/dev/null 2>&1 || true
+adb -s "$SERIAL" shell am force-stop com.g150446.voiceclasp >/dev/null 2>&1 || true
 
 echo "Installing $(du -h "$APK" | awk '{print $1}') APK over USB..."
-BEFORE="$(adb -s "$SERIAL" shell dumpsys package com.g150446.voiceharness 2>/dev/null | awk -F= '/lastUpdateTime=/{print $2; exit}' || true)"
+BEFORE="$(adb -s "$SERIAL" shell dumpsys package com.g150446.voiceclasp 2>/dev/null | awk -F= '/lastUpdateTime=/{print $2; exit}' || true)"
 adb -s "$SERIAL" install -r -g "$APK"
-AFTER="$(adb -s "$SERIAL" shell dumpsys package com.g150446.voiceharness 2>/dev/null | awk -F= '/lastUpdateTime=/{print $2; exit}' || true)"
+AFTER="$(adb -s "$SERIAL" shell dumpsys package com.g150446.voiceclasp 2>/dev/null | awk -F= '/lastUpdateTime=/{print $2; exit}' || true)"
 
 if [[ -z "${AFTER:-}" ]]; then
   echo "ERROR: package missing after install" >&2
@@ -63,7 +63,7 @@ fi
 
 if [[ "$LAUNCH" -eq 1 ]]; then
   echo "Launching..."
-  adb -s "$SERIAL" shell am start -n com.g150446.voiceharness/.MainActivity >/dev/null
+  adb -s "$SERIAL" shell am start -n com.g150446.voiceclasp/.MainActivity >/dev/null
 fi
 
 # Keep wireless adb available after USB sessions (may drop the USB transport briefly).

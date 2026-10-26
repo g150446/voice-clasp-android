@@ -75,11 +75,11 @@ kotlin {
 }
 
 android {
-    namespace = "com.g150446.voiceharness"
+    namespace = "com.g150446.voiceclasp"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.g150446.voiceharness"
+        applicationId = "com.g150446.voiceclasp"
         minSdk = 31
         targetSdk = 36
         versionCode = 1

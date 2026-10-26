@@ -112,8 +112,8 @@ FFT（512 点、Cooley-Tukey）
 
 ### 実装メモ
 
-- Silero ラッパー: `app/src/main/java/com/g150446/voiceharness/SileroVad.kt`
-- FFT フォールバック: `app/src/main/java/com/g150446/voiceharness/BleSpeechDetector.kt`
+- Silero ラッパー: `app/src/main/java/com/g150446/voiceclasp/SileroVad.kt`
+- FFT フォールバック: `app/src/main/java/com/g150446/voiceclasp/BleSpeechDetector.kt`
 - 外部ライブラリなし、Kotlin 純実装の Cooley-Tukey 基数2 FFT (`fftInPlace` 関数)
 
 - フレームサイズ: 512（2の累乗必須）

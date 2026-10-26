@@ -1,0 +1,118 @@
+package com.g150446.voiceclasp
+
+import java.util.Locale
+
+internal const val GLASSES_MODE_SWITCH_PHRASE = "グラスモード変更"
+internal const val READER_PAGE_COMMAND_MAX = 20
+/** Terminal Harbor mirror poll period; each tick repaints the glass. */
+internal const val HARBOR_MIRROR_POLL_MS = 1_000L
+/** How long a Harbor result stays on the glass before the mirror may repaint over it. */
+internal const val HARBOR_RESULT_HOLD_MS = 4_000L
+internal const val HARBOR_CONFIRM_STT_MAX = 80
+
+internal fun harborConfirmPrompt(
+    stt: String,
+    aiComment: String? = null,
+    awaitingClarification: Boolean = false,
+    stepsPreview: String = "",
+): String = buildString {
+    append("確認\n")
+    append(stt.take(HARBOR_CONFIRM_STT_MAX))
+    if (stt.length > HARBOR_CONFIRM_STT_MAX) append("…")
+    aiComment?.takeIf { it.isNotBlank() }?.let { append("\n\nAI: ").append(it) }
+    // A single tap can now run several keys in a row, so the sequence itself has to be on
+    // the glass — the summary sentence alone would hide what is about to be typed.
+    stepsPreview.takeIf { it.isNotBlank() }?.let { append("\n送信: ").append(it) }
+    append(
+        if (awaitingClarification) {
+            "\n\nダブルタップで言い直す"
+        } else {
+            "\n\nシングルタップで実行\nダブルタップで取り消す"
+        },
+    )
+}
+
+/** OpenClaw voice confirm: same tap contract as Harbor, but the text is sent as spoken. */
+internal fun openClawConfirmPrompt(stt: String): String = buildString {
+    append("OpenClawへ送信\n")
+    append(stt.take(HARBOR_CONFIRM_STT_MAX))
+    if (stt.length > HARBOR_CONFIRM_STT_MAX) append("…")
+    append("\n\nシングルタップで送信\nダブルタップで取り消す")
+}
+
+internal data class ReaderPageCommand(val pages: Int, val forward: Boolean)
+
+internal fun glassesModeSwitchRemainder(text: String): String? {
+    val trimmed = text.trim()
+    if (trimmed.isEmpty()) return null
+    val match = Regex("^グラス\\s*モード\\s*変更[\\s、。,.!！?？・:：_-]*").find(trimmed)
+        ?: return null
+    return trimmed.substring(match.range.last + 1).trim()
+}
+
+/**
+ * ASR often trails a short command with a clipped sound: 「パイロットモードに切り替えてパッ」,
+ * 「Chromeアプリを開いてP」. Up to two katakana or Latin letters after the command are ignored,
+ * and so is a short closing word some models add (「…切り替えてはい」「…ありがとうございます」).
+ */
+internal const val ASR_TAIL_NOISE =
+    "(?:[ァ-ヶーッA-Za-z]{1,2}|はい|ね|よ|どうぞ|お願い(?:します|いたします)?|ありがとう(?:ございます)?)?"
+
+private val SPOKEN_MODE_SWITCH = Regex(
+    "^(.{1,20}?)モード(?:に|へ)?(?:切り?替え|切替|変更|チェンジ|移動)?(?:して|て|てください|る)?" +
+        "$ASR_TAIL_NOISE$",
+)
+
+/**
+ * A whole utterance that only asks for an app mode ("パイロットモードに切り替えて"), without
+ * the [GLASSES_MODE_SWITCH_PHRASE] prefix. Anything longer, or a mode the app does not have
+ * (Claude Code's "プランモード"), is left to the LLM.
+ */
+internal fun spokenInteractionModeSwitch(text: String): InteractionMode? {
+    val compact = collapseRepeatedUtterance(text.replace(Regex("[\\s　、。,.!！?？・:：]+"), ""))
+    val name = SPOKEN_MODE_SWITCH.matchEntire(compact)?.groupValues?.get(1) ?: return null
+    return parseInteractionMode(name)
+}
+
+internal fun interactionModeSpokenName(mode: InteractionMode): String = when (mode) {
+    InteractionMode.AI -> "Pilot"
+    InteractionMode.READER -> "リーダー"
+    InteractionMode.HARBOR -> "Harbor"
+    InteractionMode.OPENCLAW -> "OpenClaw"
+    InteractionMode.EPUB -> "EPUB"
+}
+
+internal fun parseReaderPageCommand(text: String): ReaderPageCommand? {
+    val compact = text.lowercase(Locale.ROOT).replace(Regex("[\\s　]+"), "")
+    if (compact.isEmpty()) return null
+    val backward = listOf("戻", "前", "まえ", "back").any(compact::contains)
+    val forwardHint = listOf("進", "次", "つぎ", "めく", "forward", "next").any(compact::contains)
+    val count = parseSpokenCount(compact)
+    if (!backward && !forwardHint && count == null) return null
+    if (!backward && !forwardHint && !compact.contains("ページ") && !compact.contains("page")) {
+        return null
+    }
+    return ReaderPageCommand(
+        pages = (count ?: 1).coerceIn(1, READER_PAGE_COMMAND_MAX),
+        forward = !backward,
+    )
+}
+
+internal fun parseSpokenCount(text: String): Int? {
+    Regex("(\\d+)").find(text)?.groupValues?.get(1)?.toIntOrNull()?.let { return it }
+    val fullWidth = text.map { ch ->
+        if (ch in '０'..'９') '0' + (ch - '０') else ch
+    }.joinToString("")
+    Regex("(\\d+)").find(fullWidth)?.groupValues?.get(1)?.toIntOrNull()?.let { return it }
+    return KANJI_COUNTS.entries
+        .sortedByDescending { it.key.length }
+        .firstOrNull { text.contains(it.key) }
+        ?.value
+}
+
+private val KANJI_COUNTS = mapOf(
+    "二十" to 20, "十九" to 19, "十八" to 18, "十七" to 17, "十六" to 16,
+    "十五" to 15, "十四" to 14, "十三" to 13, "十二" to 12, "十一" to 11,
+    "十" to 10, "九" to 9, "八" to 8, "七" to 7, "六" to 6,
+    "五" to 5, "四" to 4, "三" to 3, "二" to 2, "一" to 1,
+)

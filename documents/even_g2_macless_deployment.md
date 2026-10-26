@@ -2,7 +2,7 @@
 
 ## 結論
 
-Voice HarnessのG2表示は、EvenHubへ登録したプラグインとAndroidアプリだけで動作する。
+Voice ClaspのG2表示は、EvenHubへ登録したプラグインとAndroidアプリだけで動作する。
 Mac上のViteサーバー（`:5173`）とQR/URLプロトタイプは開発時にだけ必要で、インストール後の
 通常利用には不要。
 
@@ -10,9 +10,9 @@ Mac上のViteサーバー（`:5173`）とQR/URLプロトタイプは開発時に
 
 ```text
 Harness Node / Android UI
-  -> Voice Harness Android foreground service
+  -> Voice Clasp Android foreground service
   -> http://127.0.0.1:8787（Android端末内だけ）
-  -> Even Realities App内のVoice Harnessプラグイン
+  -> Even Realities App内のVoice Claspプラグイン
   -> Even G2
 ```
 
@@ -45,7 +45,7 @@ min_app_version 2.2.9  (SDK 0.0.14, --sdk-ver)
 3. **Testing group**で利用者のEven IDを追加し、招待を承認する。
 4. **Builds**で対象ビルド右端の **Private** を押し、**Beta**を選ぶ。
 5. **Promote to Beta**を実行する。
-6. Even Realities Appの **My Plugins**からVoice Harnessをインストールまたは更新する。
+6. Even Realities Appの **My Plugins**からVoice Claspをインストールまたは更新する。
 
 重要なのは、アップロードだけではテスターへ配信されない点。PrivateビルドをBetaへ昇格すると、
 EvenHubのbetaブランチにバージョンが割り当てられる。
@@ -69,7 +69,7 @@ EvenHubのbetaブランチにバージョンが割り当てられる。
 
 - 実際のEven Realities AppパッケージIDは`com.even.sg`。Android 11以降でアプリを直接開くには、
   `<queries>`と起動候補の両方に含める。
-- Voice Harnessのforeground service起動時に`127.0.0.1:8787`のブリッジも起動する。
+- Voice Claspのforeground service起動時に`127.0.0.1:8787`のブリッジも起動する。
 - G2プラグインが接続していない場合、AI返答はTTSへフォールバックする。
 - 端末再起動後はAndroidサービスが自動復帰するが、Even HubプラグインはEven Realities Appから
   起動し直す必要がある場合がある。

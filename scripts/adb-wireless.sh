@@ -20,7 +20,7 @@ set -euo pipefail
 
 PORT="${ADB_TCP_PORT:-5555}"
 TS_HOST="${TS_HOST:-motorola-razr-50s}"
-STATE_FILE="${XDG_CACHE_HOME:-$HOME/.cache}/voice-harness/adb-wireless.host"
+STATE_FILE="${XDG_CACHE_HOME:-$HOME/.cache}/voice-clasp/adb-wireless.host"
 
 command -v adb >/dev/null 2>&1 || { echo "ERROR: adb not found." >&2; exit 1; }
 

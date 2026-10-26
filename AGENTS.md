@@ -13,7 +13,7 @@ After installing over ADB, always open the app so it is running for the user's o
 (the install stops the running app and its service):
 
 ```sh
-adb shell am start -n com.g150446.voiceharness/.MainActivity
+adb shell am start -n com.g150446.voiceclasp/.MainActivity
 ```
 
 When several devices are attached (for example wireless ADB), pass `-s <serial>` to each adb command.

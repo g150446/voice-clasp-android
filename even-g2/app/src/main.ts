@@ -49,7 +49,7 @@ const mainText = new TextContainerProperty({
   paddingLength: BODY_PADDING,
   containerID: CONTAINER_ID,
   containerName: CONTAINER_NAME,
-  content: 'Voice Harness\n\nEven G2\nWaiting for Android…',
+  content: 'Voice Clasp\n\nEven G2\nWaiting for Android…',
   isEventCapture: 1,
 })
 
@@ -118,9 +118,9 @@ function measureTextLines(value: string): number {
 }
 
 function idleMessage(state: ReadingState): string {
-  if (state.error) return `Voice Harness\n\n${state.error}`
-  if (state.enabled) return 'Voice Harness\n\nリーダーモード待機中'
-  return 'Voice Harness\n\nEven G2\nPlugin connected'
+  if (state.error) return `Voice Clasp\n\n${state.error}`
+  if (state.enabled) return 'Voice Clasp\n\nリーダーモード待機中'
+  return 'Voice Clasp\n\nEven G2\nPlugin connected'
 }
 
 function eventTypeOf(envelope?: { eventType?: OsEventTypeList }): OsEventTypeList | null {
@@ -374,8 +374,8 @@ async function poll(): Promise<void> {
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
     await renderState((await response.json()) as ReadingState)
   } catch (error) {
-    console.warn('Voice Harness bridge unavailable:', error)
-    if (currentRevision < 0) await textUpgrade('Voice Harness\n\nWaiting for Android…')
+    console.warn('Voice Clasp bridge unavailable:', error)
+    if (currentRevision < 0) await textUpgrade('Voice Clasp\n\nWaiting for Android…')
   } finally {
     window.setTimeout(() => void poll(), 500)
   }
