@@ -75,7 +75,7 @@ OpenRouter は明示オプトイン（API キー + モデル選択が必須）�
 ### 必要なもの
 
 - Android 12 以上 (API 31+)
-- XIAO nRF52840 Sense（`harness-node/nordic-main` ファームウェア書き込み済み）
+- XIAO nRF52840 Sense（[voice-clasp-node](https://github.com/g150446/voice-clasp-node) の `nordic-main` ファームウェア書き込み済み。BLE 広告名は互換性のため `HarnessNode` のまま）
 - ローカル利用時: Qwen / Gemma / LFM のオンデバイスモデル（詳細は下記ドキュメント参照）
 - クラウド利用時: Groq API キー、および/または OpenRouter API キー（モデルファイル不要）
 - デジタルアシスタント利用時: 設定アプリで Voice Clasp をデフォルトのデジタルアシスタントに指定

@@ -6,7 +6,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 /**
- * Shared, headless assistant coordinator used by both harness-node and the
+ * Shared, headless assistant coordinator used by both voice-clasp-node and the
  * system digital-assistant surface. UI components never own conversation state.
  */
 internal class BackendAssistantGateway(

@@ -1,6 +1,6 @@
 # BLE プロトコル仕様
 
-nRF52840 (`harness-node/nordic-main` ファームウェア) と Android アプリ間の BLE 通信仕様。
+nRF52840 (`voice-clasp-node/nordic-main` ファームウェア) と Android アプリ間の BLE 通信仕様。
 
 ## GATT サービス構成
 
@@ -272,7 +272,7 @@ stage 例（FW 0.0.68）: `0x01` outbound_start, `0x02` outbound_ready,
 `0x0C` stop_palm_up, `0x0D/0E` gyro on/off, `0x0F` outbound_gyro,
 `0x22` hold_sample, `0x23` motion_complete, `0x24` palm_down_gate, `0x80` reset。
 `match_detail` v1=xy, v2=lift入口+imp, v3=roll_at_lift。reason bit0=before_flip, bit1=xy_waive。
-詳細は harness-node `docs/flex_pronation_gesture.md`。
+詳細は voice-clasp-node `docs/flex_pronation_gesture.md`。
 
 **Android 側の扱い**
 

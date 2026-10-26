@@ -2794,7 +2794,7 @@ internal class VoiceProcessor(
 
     /**
      * Accessibility saw Kindle move to the foreground while reader mode is armed.
-     * Starts extraction without a harness-node gesture. Failures stay silent.
+     * Starts extraction without a voice-clasp-node gesture. Failures stay silent.
      */
     internal fun onKindleBecameForeground() {
         if (!BleConnectionService.readingPassthroughEnabled.value) return

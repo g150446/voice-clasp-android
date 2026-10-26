@@ -7,8 +7,8 @@
 
 - プロトコル: [`ble_protocol.md`](ble_protocol.md)（RX `0x07` / TX `0x3A`）
 - 誤発火経緯: [`gesture_false_trigger.md`](gesture_false_trigger.md)
-- Node FW: `harness-node` `0.0.95`（`docs/ota_update_notes.md`）
-- Node 運用: `harness-node/docs/nordic_main_guide.md`
+- Node FW: `voice-clasp-node` `0.0.95`（`docs/ota_update_notes.md`）
+- Node 運用: `voice-clasp-node/docs/nordic_main_guide.md`
 
 ---
 

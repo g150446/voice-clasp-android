@@ -222,7 +222,7 @@ DMIC slab も約80ms分しかなかった。Notify が一時停滞すると `dmi
 
 ### 対策（二層）
 
-1. **ファームウェア（harness-node 0.0.22 / `e7fd558`）**
+1. **ファームウェア（voice-clasp-node 0.0.22 / `e7fd558`）**
    - DMIC slab `BLOCK_COUNT` 12（約240ms）
    - capture thread と BLE sender を分離（ソフトウェア queue 約320ms）
    - Notify backpressure 中も `dmic_read` を継続。queue 満杯時は overrun を数える
@@ -293,10 +293,10 @@ Z100 表示仕様そのものは [`smart_glasses_output.md`](smart_glasses_outpu
 - `BleSpeechPolicy.kt`: 完全性閾値
 - `SmartGlassesOutputManager.kt`: Z100制御・表示・読み取り後の自動解放
 - `GemmaOnDeviceBackend.kt`: Gemma ASR / Chatの単一エンジン直列実行
-- `harness-node/nordic-main/src/main.c`: capture/send分離、Notify backpressure、Audio stats
-- `harness-node/nordic-main/src/audio_capture.c`: DMIC slab
+- `voice-clasp-node/nordic-main/src/main.c`: capture/send分離、Notify backpressure、Audio stats
+- `voice-clasp-node/nordic-main/src/audio_capture.c`: DMIC slab
 
 対応版:
 
 - Android (`voice-clasp-android`): `5e0695c`（BLE信頼性）+ 本変更の Z100 出力 / 共存対策
-- Firmware (`harness-node`): `44d3590`（Notify送達）+ `e7fd558` / `0.0.22`（ジェスチャー更新と音声経路分離）
+- Firmware (`voice-clasp-node`): `44d3590`（Notify送達）+ `e7fd558` / `0.0.22`（ジェスチャー更新と音声経路分離）

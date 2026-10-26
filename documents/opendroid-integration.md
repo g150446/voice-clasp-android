@@ -7,7 +7,7 @@ shipping two application modules.
 ## Runtime boundaries
 
 ```text
-harness-node PCM -> VoiceProcessor -> AssistantGateway -> VoiceAiBackend
+voice-clasp-node PCM -> VoiceProcessor -> AssistantGateway -> VoiceAiBackend
    |                      |                 |-> local/cloud LLM
    |                      |                 `-> shared TTS output
    |                      |

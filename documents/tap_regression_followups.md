@@ -3,7 +3,7 @@
 FW `0.0.76`〜`0.0.86` でダブルタップ `0x12` が Android に届かなくなっていた不具合は
 FW `0.0.87` で解消し、実機で single 5/5・double 5/5・誤検出 0（10/10 PASS）を確認した。
 経緯と最終仕様は [`ble_protocol.md`](ble_protocol.md) の「0x12 / 0x14」節、
-およびファーム側 `harness-node/docs/nordic_main_guide.md` の
+およびファーム側 `voice-clasp-node/docs/nordic_main_guide.md` の
 「シングル／ダブルタップ」を参照。
 
 その調査で入れたまま、あるいは直さずに残した項目が 2 件あった。**FW `0.0.90` と
@@ -44,7 +44,7 @@ Android 側の対応で両方とも解消済み**。以下はその記録で、�
 （`mac_client/tap_monitor.py` から叩ける）。`0xD1`（タップ 1 回につき生 `TAP_SRC`
 1 パケット）は頻度が低く閾値・軸の調整にそのまま効くので温存した。
 
-**変更先**: `harness-node/nordic-main/src/main.c`
+**変更先**: `voice-clasp-node/nordic-main/src/main.c`
 
 ---
 
@@ -102,7 +102,7 @@ hex ダンプログには出るが、それだけ。
 
 **変更先**: `app/src/main/java/com/g150446/voiceclasp/BleManager.kt`、
 `BleConnectionService.kt`、`VoiceViewModel.kt`、`MainActivity.kt`、
-`harness-node/nordic-main/src/main.c`
+`voice-clasp-node/nordic-main/src/main.c`
 
 ---
 
