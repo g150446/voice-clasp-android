@@ -9,9 +9,10 @@ import org.junit.Test
 class VoiceProcessorDoubleTapTest {
 
     @Test
-    fun `recording tap mode storage defaults to single and restores known values`() {
-        assertEquals(RecordingTapMode.SINGLE, RecordingTapMode.fromStorage(null))
-        assertEquals(RecordingTapMode.SINGLE, RecordingTapMode.fromStorage("unknown"))
+    fun `recording tap mode storage defaults to double and restores known values`() {
+        assertEquals(RecordingTapMode.DOUBLE, RecordingTapMode.fromStorage(null))
+        assertEquals(RecordingTapMode.DOUBLE, RecordingTapMode.fromStorage("unknown"))
+        // A stored choice still wins over the default.
         assertEquals(RecordingTapMode.SINGLE, RecordingTapMode.fromStorage("SINGLE"))
         assertEquals(RecordingTapMode.DOUBLE, RecordingTapMode.fromStorage("DOUBLE"))
     }

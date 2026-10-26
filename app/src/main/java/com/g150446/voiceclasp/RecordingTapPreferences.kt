@@ -9,11 +9,11 @@ enum class RecordingTapMode {
 
     companion object {
         fun fromStorage(value: String?): RecordingTapMode =
-            entries.firstOrNull { it.name == value } ?: SINGLE
+            entries.firstOrNull { it.name == value } ?: DOUBLE
     }
 }
 
-/** Persists the recording tap mode. Existing installs default to single tap. */
+/** Persists the recording tap mode. A fresh install records on a double tap. */
 internal class RecordingTapPreferences(context: Context) {
     private val preferences = context.applicationContext.getSharedPreferences(
         PREFERENCES_NAME,

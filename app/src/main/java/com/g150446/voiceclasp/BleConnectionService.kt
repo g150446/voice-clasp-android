@@ -90,8 +90,8 @@ class BleConnectionService : Service() {
         private val _singleTapStatus = MutableStateFlow(SingleTapStatus())
         val singleTapStatus: StateFlow<SingleTapStatus> = _singleTapStatus.asStateFlow()
 
-        /** Tap event used to start/stop recording; single tap remains the default. */
-        private val _recordingTapMode = MutableStateFlow(RecordingTapMode.SINGLE)
+        /** Tap event used to start/stop recording; double tap is the default. */
+        private val _recordingTapMode = MutableStateFlow(RecordingTapMode.DOUBLE)
         val recordingTapMode: StateFlow<RecordingTapMode> = _recordingTapMode.asStateFlow()
         // _drivingMode is the app's *intent* (DrivingModeController's verdict plus any
         // manual override). The two below are what the node reported over 0x40, so a
