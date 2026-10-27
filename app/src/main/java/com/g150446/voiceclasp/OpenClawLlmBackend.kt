@@ -38,7 +38,7 @@ internal class OpenClawApiClient(
                 sessionKey
             },
         )
-        val body = OpenClawChatRequestBuilder.buildRequestBody(request, model = target)
+        val body = OpenClawChatRequestBuilder.buildRequestBody(request, model = chatTargetFor(target, key))
         val call = httpClient.newCall(
             authorizedRequest("${normalizedBaseUrl()}/v1/chat/completions")
                 .addHeader("x-openclaw-session-key", key)
@@ -59,7 +59,7 @@ internal class OpenClawApiClient(
             conversationHistory = listOf(ConversationTurn(role = "user", content = prompt)),
             languageCode = "ja",
         )
-        val body = OpenClawChatRequestBuilder.buildRequestBody(request, model = target)
+        val body = OpenClawChatRequestBuilder.buildRequestBody(request, model = chatTargetFor(target, key))
         val call = httpClient.newCall(
             authorizedRequest("${normalizedBaseUrl()}/v1/chat/completions")
                 .addHeader("x-openclaw-session-key", key)
@@ -85,7 +85,7 @@ internal class OpenClawApiClient(
             ),
             languageCode = "ja",
         )
-        val body = OpenClawChatRequestBuilder.buildRequestBody(request, model = target)
+        val body = OpenClawChatRequestBuilder.buildRequestBody(request, model = chatTargetFor(target, key))
         val call = httpClient.newCall(
             authorizedRequest("${normalizedBaseUrl()}/v1/chat/completions")
                 .addHeader("x-openclaw-session-key", key)

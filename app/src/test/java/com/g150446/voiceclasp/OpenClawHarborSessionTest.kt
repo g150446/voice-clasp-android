@@ -73,6 +73,30 @@ class OpenClawHarborSessionTest {
     }
 
     @Test
+    fun `a generic target takes the agent its session key names`() {
+        // A multi-agent Gateway rejects openclaw/default even on agent:main:main.
+        assertEquals("openclaw/main", chatTargetFor("openclaw/default", "agent:main:main"))
+        assertEquals("openclaw/main", chatTargetFor("openclaw", "agent:main:main"))
+        assertEquals("openclaw/main", chatTargetFor("", "agent:main:voice-clasp:abc"))
+        assertEquals("openclaw/harbor-voice", chatTargetFor("openclaw/harbor-voice", "agent:main:main"))
+        assertEquals("openclaw/default", chatTargetFor("openclaw/default", "voice-clasp:abc"))
+    }
+
+    @Test
+    fun `the multiple agents rejection says to pick an agent without echoing the body`() {
+        val body = """{"error":{"message":"Multiple agents are configured, but this operation has no explicit owner. TOPSECRET"}}"""
+
+        val message = OpenClawChatRequestBuilder.safeHttpError(400, body)
+
+        assertTrue(message.contains("openclaw/main"))
+        assertFalse(message.contains("TOPSECRET"))
+        assertEquals(
+            "OpenClaw error 400: Gateway への要求に失敗しました。",
+            OpenClawChatRequestBuilder.safeHttpError(400, "{}"),
+        )
+    }
+
+    @Test
     fun `an already scoped key is left as the user chose it`() {
         assertEquals(
             "agent:main:existing",

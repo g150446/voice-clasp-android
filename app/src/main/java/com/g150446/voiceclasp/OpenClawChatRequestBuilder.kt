@@ -93,7 +93,19 @@ object OpenClawChatRequestBuilder {
         body: String?,
         notFound: String = "Chat Completions が見つかりません。Gateway 側で有効化してください。",
     ): String {
-        val label = when (code) {
+        val label = when {
+            code == 400 && body.orEmpty().contains(MULTIPLE_AGENTS_ERROR) ->
+                "Gateway に複数の agent があります。設定で送信先 agent（例: openclaw/main）を選んでください。"
+            else -> labelFor(code, notFound)
+        }
+        // Gateway error bodies are deliberately not echoed: auth servers sometimes reflect credentials.
+        return "OpenClaw error $code: $label"
+    }
+
+    private const val MULTIPLE_AGENTS_ERROR = "Multiple agents are configured"
+
+    private fun labelFor(code: Int, notFound: String): String =
+        when (code) {
             401 -> "認証に失敗しました。Gateway token を確認してください。"
             403 -> "Gateway にこの操作の権限がありません。"
             404 -> notFound
@@ -101,7 +113,4 @@ object OpenClawChatRequestBuilder {
             in 500..599 -> "Gateway でエラーが発生しました。"
             else -> "Gateway への要求に失敗しました。"
         }
-        // Gateway error bodies are deliberately not echoed: auth servers sometimes reflect credentials.
-        return "OpenClaw error $code: $label"
-    }
 }

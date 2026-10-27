@@ -168,6 +168,24 @@ internal fun agentScopedSessionKey(model: String?, key: String): String {
     return "agent:$agentId:$key"
 }
 
+/**
+ * The `model` to send with a request on [scopedKey].
+ *
+ * The session key alone does not pick the agent: a Gateway running several agents still
+ * rejects the generic `openclaw/default` even on `agent:main:main`. When the target names no
+ * agent but the key does, the key's agent becomes the target.
+ */
+internal fun chatTargetFor(model: String?, scopedKey: String): String {
+    val target = model?.trim().orEmpty().ifEmpty { OpenClawChatRequestBuilder.MODEL }
+    if (openClawAgentId(target) != null) return target
+    val agentId = scopedKey.takeIf { it.startsWith("agent:") }
+        ?.split(':')
+        ?.getOrNull(1)
+        ?.takeIf { it.isNotBlank() }
+        ?: return target
+    return "openclaw/$agentId"
+}
+
 /** Colons would create a namespace of their own, and the Gateway reserves several. */
 private fun sanitizeSessionSegment(value: String?): String =
     value?.trim().orEmpty().map { if (it.isLetterOrDigit() || it == '-' || it == '_') it else '-' }
