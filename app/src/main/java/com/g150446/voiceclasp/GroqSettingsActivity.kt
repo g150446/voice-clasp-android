@@ -39,6 +39,9 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.g150446.voiceclasp.ui.theme.HarnessVoiceTheme
+import com.google.mlkit.vision.barcode.common.Barcode
+import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
+import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -449,98 +452,144 @@ private fun ModelSettingsScreen(modifier: Modifier = Modifier) {
                 "ホームの操作モードで OpenClaw を選ぶと、音声・チャットの送信先が OpenClaw になります。",
                 fontSize = 11.sp,
             )
-            Spacer(modifier = Modifier.height(8.dp))
-            Text("OpenClaw Gateway", fontSize = 14.sp)
-            Text(
-                "Gateway は公開せず、Mac のローカルネットワークまたは tailnet 内だけで使用してください。",
-                fontSize = 11.sp,
-            )
             var gatewayUrl by remember { mutableStateOf(OpenClawPrefs.getBaseUrl(context)) }
             var gatewayToken by remember { mutableStateOf(OpenClawPrefs.getToken(context)) }
             var chatAgent by remember { mutableStateOf(OpenClawPrefs.getAgent(context)) }
             var harborAgent by remember { mutableStateOf(OpenClawPrefs.getHarborAgent(context)) }
-            OutlinedTextField(
-                value = gatewayUrl,
-                onValueChange = { gatewayUrl = it },
-                label = { Text("Gateway URL") },
-                supportingText = { Text("例: http://MacのTailscale-IP:18789") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            OutlinedTextField(
-                value = gatewayToken,
-                onValueChange = { gatewayToken = it },
-                label = { Text("Gateway token / password") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                visualTransformation = PasswordVisualTransformation(),
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            OutlinedTextField(
-                value = chatAgent,
-                onValueChange = { chatAgent = it },
-                label = { Text("OpenClaw エージェント") },
-                supportingText = {
-                    Text(
-                        "Gateway で複数の agent を運用している場合は openclaw/main のように " +
-                            "名前で指定してください（fleet には既定の agent がありません）。" +
-                            "単一 agent なら ${OpenClawPrefs.DEFAULT_AGENT} のままで動きます。",
+            var showAdvanced by remember { mutableStateOf(false) }
+            val testOpenClawConnection = {
+                actionStatus = "OpenClaw 接続確認中..."
+                scope.launch {
+                    val backend = OpenClawLlmBackend(context.applicationContext)
+                    val result = backend.testConnection()
+                    backend.release()
+                    actionStatus = result.fold(
+                        onSuccess = { it },
+                        onFailure = { "接続失敗: ${it.message ?: "不明なエラー"}" },
                     )
-                },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-            )
+                }
+            }
             Spacer(modifier = Modifier.height(8.dp))
-            OutlinedTextField(
-                value = harborAgent,
-                onValueChange = { harborAgent = it },
-                label = { Text("Terminal Harbor 解釈エージェント") },
-                supportingText = {
-                    Text(
-                        "Harbor モードの音声を解釈する agent target。実行はアプリ側のタップ確認のままです。" +
-                            "既定は ${OpenClawPrefs.DEFAULT_HARBOR_AGENT}。",
-                    )
-                },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
+            Text(
+                if (gatewayToken.isBlank()) "未設定" else "設定済み: $gatewayUrl",
+                fontSize = 12.sp,
+            )
+            Text(
+                "Mac で `openclaw connect-qr` を実行し、表示された QR を読み取ります" +
+                    "（プラグイン: github.com/g150446/openclaw-connect-qr）。",
+                fontSize = 11.sp,
             )
             Spacer(modifier = Modifier.height(8.dp))
             Button(
                 onClick = {
-                    OpenClawPrefs.setBaseUrl(context, gatewayUrl)
-                    OpenClawPrefs.setToken(context, gatewayToken)
-                    OpenClawPrefs.setAgent(context, chatAgent)
-                    OpenClawPrefs.setHarborAgent(context, harborAgent)
-                    actionStatus = if (gatewayToken.isBlank()) {
-                        "OpenClaw token をクリアしました"
-                    } else {
-                        "OpenClaw 設定を保存しました"
-                    }
+                    val options = GmsBarcodeScannerOptions.Builder()
+                        .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
+                        .enableAutoZoom()
+                        .build()
+                    GmsBarcodeScanning.getClient(context, options).startScan()
+                        .addOnSuccessListener { barcode ->
+                            parseOpenClawSetupUri(barcode.rawValue.orEmpty()).fold(
+                                onSuccess = { setup ->
+                                    OpenClawPrefs.setBaseUrl(context, setup.baseUrl)
+                                    OpenClawPrefs.setToken(context, setup.secret)
+                                    setup.agent?.let { OpenClawPrefs.setAgent(context, it) }
+                                    gatewayUrl = OpenClawPrefs.getBaseUrl(context)
+                                    gatewayToken = OpenClawPrefs.getToken(context)
+                                    chatAgent = OpenClawPrefs.getAgent(context)
+                                    testOpenClawConnection()
+                                },
+                                onFailure = { actionStatus = "QR 読み取り失敗: ${it.message}" },
+                            )
+                        }
+                        .addOnFailureListener { error ->
+                            actionStatus = "QR 読み取り失敗: ${error.message ?: "不明なエラー"}"
+                        }
                 },
                 modifier = Modifier.fillMaxWidth(),
-            ) { Text("OpenClaw 設定を保存") }
-            Spacer(modifier = Modifier.height(8.dp))
-            OutlinedButton(
-                onClick = {
-                    OpenClawPrefs.setBaseUrl(context, gatewayUrl)
-                    OpenClawPrefs.setToken(context, gatewayToken)
-                    // Saved first so the check exercises the agents that are typed in.
-                    OpenClawPrefs.setAgent(context, chatAgent)
-                    OpenClawPrefs.setHarborAgent(context, harborAgent)
-                    actionStatus = "OpenClaw 接続確認中..."
-                    scope.launch {
-                        val backend = OpenClawLlmBackend(context.applicationContext)
-                        val result = backend.testConnection()
-                        backend.release()
-                        actionStatus = result.fold(
-                            onSuccess = { it },
-                            onFailure = { "接続失敗: ${it.message ?: "不明なエラー"}" },
+            ) { Text("QRで設定") }
+            TextButton(
+                onClick = { showAdvanced = !showAdvanced },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text(if (showAdvanced) "詳細設定（手入力）を閉じる" else "詳細設定（手入力）") }
+            if (showAdvanced) {
+                Text(
+                    "Gateway は公開せず、Mac のローカルネットワークまたは tailnet 内だけで使用してください。",
+                    fontSize = 11.sp,
+                )
+                OutlinedTextField(
+                    value = gatewayUrl,
+                    onValueChange = { gatewayUrl = it },
+                    label = { Text("Gateway URL") },
+                    supportingText = { Text("例: http://MacのTailscale-IP:18789") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = gatewayToken,
+                    onValueChange = { gatewayToken = it },
+                    label = { Text("Gateway token / password") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = chatAgent,
+                    onValueChange = { chatAgent = it },
+                    label = { Text("OpenClaw エージェント") },
+                    supportingText = {
+                        Text(
+                            "Gateway で複数の agent を運用している場合は openclaw/main のように " +
+                                "名前で指定してください（fleet には既定の agent がありません）。" +
+                                "単一 agent なら ${OpenClawPrefs.DEFAULT_AGENT} のままで動きます。",
                         )
-                    }
-                },
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text("OpenClaw 接続確認") }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = harborAgent,
+                    onValueChange = { harborAgent = it },
+                    label = { Text("Terminal Harbor 解釈エージェント") },
+                    supportingText = {
+                        Text(
+                            "Harbor モードの音声を解釈する agent target。実行はアプリ側のタップ確認のままです。" +
+                                "既定は ${OpenClawPrefs.DEFAULT_HARBOR_AGENT}。",
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(
+                    onClick = {
+                        OpenClawPrefs.setBaseUrl(context, gatewayUrl)
+                        OpenClawPrefs.setToken(context, gatewayToken)
+                        OpenClawPrefs.setAgent(context, chatAgent)
+                        OpenClawPrefs.setHarborAgent(context, harborAgent)
+                        actionStatus = if (gatewayToken.isBlank()) {
+                            "OpenClaw token をクリアしました"
+                        } else {
+                            "OpenClaw 設定を保存しました"
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("OpenClaw 設定を保存") }
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = {
+                        OpenClawPrefs.setBaseUrl(context, gatewayUrl)
+                        OpenClawPrefs.setToken(context, gatewayToken)
+                        // Saved first so the check exercises the agents that are typed in.
+                        OpenClawPrefs.setAgent(context, chatAgent)
+                        OpenClawPrefs.setHarborAgent(context, harborAgent)
+                        testOpenClawConnection()
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("OpenClaw 接続確認") }
+            }
             Spacer(modifier = Modifier.height(8.dp))
             var selectedSession by remember { mutableStateOf(OpenClawPrefs.getSelectedSessionKey(context)) }
             var sessionChoices by remember { mutableStateOf<List<OpenClawSessionInfo>?>(null) }

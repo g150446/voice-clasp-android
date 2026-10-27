@@ -176,6 +176,7 @@ QR/URLと`npm run dev`はプラグイン開発時だけ使用する。配布パ�
 ### G2操作モード
 
 ホームの「操作モード」で **Pilot / リーダー / Harbor / OpenClaw / EPUB** を切り替えられる（EPUB は [`documents/epub_reader.md`](documents/epub_reader.md)）。
+OpenClaw の接続は、Mac で `openclaw connect-qr`（[openclaw-connect-qr](https://github.com/g150446/openclaw-connect-qr) プラグイン）を実行し、モデル設定の **QRで設定** で読み取るだけで済む（詳細は [`documents/openclaw.md`](documents/openclaw.md)）。
 Pilot は旧称「AI対話」。今後スマートフォン操作も担う予定のため改名した。音声では「パイロットモードに切り替えて」のように、モード名＋「モード（に切り替えて）」だけを話すと切り替わる（「グラスモード変更」の前置きは任意。旧名「AI対話」は受け付けない）。音声で切り替えたときはアプリの画面も追従し、Pilot ならホームへ、Harbor なら前回アクティブだったワークスペースの画面へ移る（ボタン操作・プラグイン切断では画面を動かさない）。
 リーダーとTerminal Harborは、それぞれの欄にあるトグルからもON/OFFできる。
 選択したモードは端末に保存され、アプリ再起動後も G2 再接続と（Harbor の場合）ペアリングが揃えば自動復帰する。

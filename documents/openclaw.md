@@ -7,13 +7,31 @@ OpenClaw Gateway へ送る。Terminal Harbor の workspace instruction API は�
 
 ## Android の設定
 
-1. ホーム → **モデル設定** の **OpenClaw（応答先。LLM とは別）** セクションで設定する
-   （応答モデル(LLM)の一覧には出ない）。
-2. Gateway URL に、電話から到達できる Mac の private URL を入力する
+### QR で設定（推奨）
+
+1. Mac に [openclaw-connect-qr](https://github.com/g150446/openclaw-connect-qr) プラグインを入れる。
+   ```bash
+   git clone https://github.com/g150446/openclaw-connect-qr.git
+   cd openclaw-connect-qr && npm install
+   openclaw plugins install --link "$PWD"
+   ```
+2. Mac で `openclaw connect-qr` を実行する（fleet なら `--agent openclaw/main` を付ける）。
+   Chat Completions が無効な場合や、`gateway.bind` が loopback で電話から届かない場合は、直し方が表示される。
+3. ホーム → **モデル設定** の **OpenClaw（応答先。LLM とは別）** で **QRで設定** を押し、QR を読む。
+   Gateway URL と token（指定されていれば agent も）が保存され、そのまま接続確認まで行われる。
+
+公式の `openclaw qr` は Gateway Protocol（WebSocket・端末ペアリング）用で、このアプリが使う HTTP の
+`/v1/chat/completions` と `/tools/invoke` では使えない。そのため別のプラグインにしている。
+
+### 手入力
+
+**詳細設定（手入力）** を開くと、従来どおり入力できる。
+
+1. Gateway URL に、電話から到達できる Mac の private URL を入力する
    （例 `http://<Mac の Tailscale IP>:18789`）。既定の
    `http://127.0.0.1:18789` は同一端末テスト用なので、実機では置き換える。
-3. OpenClaw の `gateway.auth.token`（password mode なら password）を入力して保存する。
-4. **OpenClaw 接続確認**を押す。
+2. OpenClaw の `gateway.auth.token`（password mode なら password）を入力して保存する。
+3. **OpenClaw 接続確認**を押す。
 
 token/password は Android Keystore の AES-256-GCM 鍵で暗号化し、SharedPreferences
 には暗号文だけを保存する。要求本文、token、Authorization header はログへ出さない。
