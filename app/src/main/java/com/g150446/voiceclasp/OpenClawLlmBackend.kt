@@ -118,9 +118,19 @@ internal class OpenClawApiClient(
     }
 
     /** Newest tail (up to [limit] messages) of [sessionKey] via `POST /tools/invoke` `sessions_history`. */
+    /** The newest window of a session's transcript, oldest first. */
     fun fetchHistory(sessionKey: String, limit: Int = HISTORY_LIMIT): List<OpenClawHistoryMessage> =
-        invokeTool("sessions_history", JSONObject().put("sessionKey", sessionKey).put("limit", limit))
-            .let(OpenClawHistoryParser::parseHistory)
+        fetchHistoryPage(sessionKey, offset = 0, limit = limit).messages
+
+    /**
+     * One window of a session's transcript. The Gateway caps each reply at 80 KB, so older
+     * turns are reached by asking again from the page's `nextOffset`.
+     */
+    fun fetchHistoryPage(sessionKey: String, offset: Int, limit: Int = HISTORY_LIMIT): OpenClawHistoryPage =
+        invokeTool(
+            "sessions_history",
+            JSONObject().put("sessionKey", sessionKey).put("limit", limit).put("offset", offset),
+        ).let(OpenClawHistoryParser::parseHistoryPage)
 
     /** Sessions visible to the Gateway operator, most recently updated first. */
     fun listSessions(limit: Int = SESSION_LIST_LIMIT): List<OpenClawSessionInfo> =
@@ -244,16 +254,21 @@ class OpenClawLlmBackend(
         }
     }
 
-    suspend fun loadHistory(): Result<List<OpenClawHistoryMessage>> = withContext(Dispatchers.IO) {
+    suspend fun loadHistory(): Result<List<OpenClawHistoryMessage>> =
+        loadHistoryPage(offset = 0).map { it.messages }
+
+    /** One window of the chat session's transcript; offset 0 is the newest. */
+    suspend fun loadHistoryPage(offset: Int): Result<OpenClawHistoryPage> = withContext(Dispatchers.IO) {
         runCatching {
             val client = configuredClient()
             // The same key the chat turns go to, agent scope included, or the history read
             // would look up a session that was never written.
-            client.fetchHistory(
+            client.fetchHistoryPage(
                 agentScopedSessionKey(
                     OpenClawPrefs.getAgent(appContext),
                     OpenClawPrefs.getChatSessionKey(appContext),
                 ),
+                offset = offset,
             )
         }
     }

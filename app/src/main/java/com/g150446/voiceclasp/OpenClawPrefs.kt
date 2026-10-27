@@ -92,7 +92,7 @@ object OpenClawPrefs {
         return created
     }
 
-    /** Existing Gateway session (e.g. the one open in the browser) chosen in settings; null = app-owned session. */
+    /** Existing Gateway session chosen in settings (the app-owned one included); null = the agent's main session. */
     fun getSelectedSessionKey(context: Context): String? = context
         .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         .getString(KEY_SELECTED_SESSION_KEY, null)
@@ -109,9 +109,12 @@ object OpenClawPrefs {
             .apply()
     }
 
-    /** Session used for chat and history: the selected Gateway session, else the app-owned one. */
+    /**
+     * Session used for chat and history: the selected Gateway session, else the agent's main
+     * session — the conversation the browser's Control UI opens by default.
+     */
     fun getChatSessionKey(context: Context): String =
-        getSelectedSessionKey(context) ?: getOrCreateSessionKey(context)
+        getSelectedSessionKey(context) ?: mainSessionKey(getAgent(context))
 
     /**
      * Session that interprets voice for one Harbor workspace.
@@ -132,6 +135,12 @@ internal fun harborSessionKey(base: String, workspaceId: String?): String {
     val scope = sanitizeSessionSegment(workspaceId)
     return if (scope.isEmpty()) "$base:harbor" else "$base:harbor:$scope"
 }
+
+/**
+ * `agent:<id>:main`, the agent's main session. Spelled out with the agent even for an unnamed
+ * target, whose default agent is `main`: a Gateway running several agents refuses a bare `main`.
+ */
+internal fun mainSessionKey(model: String?): String = "agent:${openClawAgentId(model) ?: "main"}:main"
 
 internal fun isHarborSessionKey(key: String): Boolean =
     key.endsWith(":harbor") || key.contains(":harbor:")

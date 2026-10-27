@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.os.Bundle
 import android.util.Log
 import com.g150446.voiceclasp.BleConnectionService
+import com.g150446.voiceclasp.OpenClawHistoryMessage
 import com.g150446.voiceclasp.OpenClawLlmBackend
 import com.g150446.voiceclasp.isOpenClawRoute
 import com.g150446.voiceclasp.QueryOrigin
@@ -51,6 +52,12 @@ object AssistantSessionController {
     private var finishSession: (() -> Unit)? = null
     private var submitJob: Job? = null
     private var historyJob: Job? = null
+    private var olderHistoryJob: Job? = null
+
+    // Windows paged in above the newest one, oldest first, and the session size when the newest
+    // window was read: offsets count back from the newest message, so they move as turns land.
+    private var olderMessages: List<AssistantChatMessage> = emptyList()
+    private var latestTotal: Int? = null
     private val cancelledRequests = mutableSetOf<String>()
 
     fun beginSession(context: Context, onFinishSession: () -> Unit) {
@@ -79,6 +86,9 @@ object AssistantSessionController {
             pendingJpeg = null
             assistReceived = false
             screenshotReceived = false
+            olderHistoryJob?.cancel()
+            olderMessages = emptyList()
+            latestTotal = null
             conversationId = "digital-assistant-${UUID.randomUUID()}"
             sessionOpen = true
             finishSession = onFinishSession
@@ -96,8 +106,9 @@ object AssistantSessionController {
     }
 
     /**
-     * Loads the OpenClaw session transcript (the browser-visible conversation) into the sheet.
-     * Gateway is the source of truth, so a successful load replaces the local message list.
+     * Loads the newest window of the OpenClaw session transcript (the browser-visible
+     * conversation) into the sheet; [loadOlderHistory] pages further back on demand.
+     * Gateway is the source of truth, so a successful load replaces the newest part of the list.
      * Skipped when the OpenClaw mode is not on or the device is locked.
      */
     fun refreshHistory(context: Context) {
@@ -111,21 +122,26 @@ object AssistantSessionController {
                 if (it.phase == AssistantPhase.IDLE) it.copy(statusText = "履歴を読み込み中…") else it
             }
             val backend = OpenClawLlmBackend(appContext)
-            val result = backend.loadHistory()
+            val result = backend.loadHistoryPage(offset = 0)
             backend.release()
             if (convId != conversationId) return@launch
             result.fold(
-                onSuccess = { history ->
-                    val fetched = history.mapIndexed { index, message ->
-                        AssistantChatMessage(
-                            id = "history-$index-${message.text.hashCode()}",
-                            role = message.role,
-                            content = message.text,
-                        )
-                    }
+                onSuccess = { page ->
+                    val fetched = page.messages.toChatMessages("history")
+                    val previousTotal = latestTotal
+                    latestTotal = page.total
                     _uiState.update {
+                        val olderOffset = when {
+                            // Nothing paged in yet: older turns start where this window ends.
+                            olderMessages.isEmpty() -> page.nextOffset
+                            previousTotal != null && page.total != null ->
+                                it.olderHistoryOffset?.plus(page.total - previousTotal)
+                            else -> it.olderHistoryOffset
+                        }
+                        val newest = it.messages.drop(olderMessages.size)
                         it.copy(
-                            messages = AssistantHistoryMerge.merge(it.messages, fetched, it.phase),
+                            messages = olderMessages + AssistantHistoryMerge.merge(newest, fetched, it.phase),
+                            olderHistoryOffset = olderOffset,
                             statusText = if (it.phase == AssistantPhase.IDLE) "待機中" else it.statusText,
                         )
                     }
@@ -142,6 +158,53 @@ object AssistantSessionController {
             )
         }
     }
+
+    /** Pages in the window before the oldest one shown, when there is one and none is loading. */
+    fun loadOlderHistory(context: Context) {
+        val appContext = context.applicationContext
+        val offset = _uiState.value.olderHistoryOffset ?: return
+        if (_uiState.value.loadingOlder || !isOpenClawRoute()) return
+        val convId = conversationId
+        _uiState.update { it.copy(loadingOlder = true) }
+        olderHistoryJob = scope.launch(Dispatchers.IO) {
+            val backend = OpenClawLlmBackend(appContext)
+            val result = backend.loadHistoryPage(offset)
+            backend.release()
+            if (convId != conversationId) return@launch
+            result.fold(
+                onSuccess = { page ->
+                    val older = page.messages.toChatMessages("older-$offset")
+                    olderMessages = older + olderMessages
+                    _uiState.update {
+                        it.copy(
+                            messages = older + it.messages,
+                            olderHistoryOffset = page.nextOffset?.takeIf { next -> next > offset },
+                            loadingOlder = false,
+                        )
+                    }
+                },
+                onFailure = { e ->
+                    Log.w(TAG, "Older history load failed: ${e.javaClass.simpleName}")
+                    _uiState.update {
+                        it.copy(
+                            loadingOlder = false,
+                            errorMessage = "過去の会話を読み込めませんでした: ${e.message ?: "不明なエラー"}",
+                        )
+                    }
+                },
+            )
+        }
+    }
+
+    // Ids stay put when windows are added above, so the list keeps its scroll position.
+    private fun List<OpenClawHistoryMessage>.toChatMessages(prefix: String): List<AssistantChatMessage> =
+        mapIndexed { index, message ->
+            AssistantChatMessage(
+                id = "$prefix-$index-${message.text.hashCode()}",
+                role = message.role,
+                content = message.text,
+            )
+        }
 
     fun attachFinishHandler(onFinishSession: () -> Unit) {
         finishSession = onFinishSession

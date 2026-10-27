@@ -104,6 +104,43 @@ class OpenClawApiClientTest {
     }
 
     @Test
+    fun `a history page asks from its offset and reports where older turns start`() {
+        MockWebServer().use { server ->
+            server.enqueue(
+                MockResponse().setBody(
+                    """{"ok":true,"result":{"details":{"messages":[{"role":"user","content":"old"}],""" +
+                        """"nextOffset":318,"hasMore":true,"totalMessages":581}}}""",
+                ),
+            )
+
+            val page = client(server, "k").fetchHistoryPage("main", offset = 159)
+
+            assertTrue(server.takeRequest().body.readUtf8().contains("\"offset\":159"))
+            assertEquals(listOf("old"), page.messages.map { it.text })
+            assertEquals(318, page.nextOffset)
+            assertEquals(581, page.total)
+        }
+    }
+
+    @Test
+    fun `history reads only the newest window`() {
+        MockWebServer().use { server ->
+            server.enqueue(
+                MockResponse().setBody(
+                    """{"ok":true,"result":{"details":{"messages":[{"role":"user","content":"new"}],""" +
+                        """"nextOffset":159,"hasMore":true}}}""",
+                ),
+            )
+
+            val history = client(server, "k").fetchHistory("main")
+
+            assertTrue(server.takeRequest().body.readUtf8().contains("\"offset\":0"))
+            assertEquals(1, server.requestCount)
+            assertEquals(listOf("new"), history.map { it.text })
+        }
+    }
+
+    @Test
     fun `history 404 explains tool policy without echoing the response body`() {
         MockWebServer().use { server ->
             server.enqueue(MockResponse().setResponseCode(404).setBody("Bearer gateway-secret leaked"))

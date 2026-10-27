@@ -594,7 +594,7 @@ private fun ModelSettingsScreen(modifier: Modifier = Modifier) {
             var selectedSession by remember { mutableStateOf(OpenClawPrefs.getSelectedSessionKey(context)) }
             var sessionChoices by remember { mutableStateOf<List<OpenClawSessionInfo>?>(null) }
             Text(
-                "会話セッション: ${selectedSession ?: "アプリ専用 (${OpenClawPrefs.getOrCreateSessionKey(context)})"}",
+                "会話セッション: ${selectedSession ?: "main（既定）"}",
                 fontSize = 11.sp,
             )
             OutlinedButton(
@@ -630,7 +630,16 @@ private fun ModelSettingsScreen(modifier: Modifier = Modifier) {
                                     sessionChoices = null
                                 },
                                 modifier = Modifier.fillMaxWidth(),
-                            ) { Text("アプリ専用セッションに戻す") }
+                            ) { Text("main に戻す（既定）") }
+                            TextButton(
+                                onClick = {
+                                    val appOwned = OpenClawPrefs.getOrCreateSessionKey(context)
+                                    OpenClawPrefs.setSelectedSessionKey(context, appOwned)
+                                    selectedSession = appOwned
+                                    sessionChoices = null
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { Text("アプリ専用セッションを使う") }
                             if (choices.isEmpty()) Text("選択できるセッションがありません。", fontSize = 12.sp)
                             choices.forEach { session ->
                                 TextButton(

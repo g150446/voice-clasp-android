@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -40,6 +41,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -47,14 +53,17 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.g150446.voiceclasp.ui.theme.HarnessVoiceTheme
+import kotlinx.coroutines.flow.distinctUntilChanged
 
 /**
  * Bottom-sheet style assistant UI launched from VoiceInteractionSession.
  * Not retained in recents; reconnects to [AssistantSessionController] on recreation.
+ * Opened from the home screen's OpenClaw chat button with [EXTRA_FULL_SCREEN], it fills the screen.
  */
 class HarnessAssistantActivity : ComponentActivity() {
     private var recognizer: SpeechRecognizer? = null
     private var listening = false
+    private var fullScreen by mutableStateOf(false)
 
     private val micPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -68,6 +77,7 @@ class HarnessAssistantActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        fullScreen = intent.getBooleanExtra(EXTRA_FULL_SCREEN, false)
         onBackPressedDispatcher.addCallback(
             this,
             object : OnBackPressedCallback(true) {
@@ -87,6 +97,7 @@ class HarnessAssistantActivity : ComponentActivity() {
                 }
                 AssistantSheet(
                     state = state,
+                    fullScreen = fullScreen,
                     onClose = { closeAssistant() },
                     onOutside = { closeAssistant() },
                     onDraftChange = { AssistantSessionController.setDraftText(it) },
@@ -100,9 +111,15 @@ class HarnessAssistantActivity : ComponentActivity() {
                         )
                     },
                     onMic = { toggleMic() },
+                    onLoadOlder = { AssistantSessionController.loadOlderHistory(applicationContext) },
                 )
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        fullScreen = intent.getBooleanExtra(EXTRA_FULL_SCREEN, false)
     }
 
     override fun onResume() {
@@ -222,45 +239,63 @@ class HarnessAssistantActivity : ComponentActivity() {
         recognizer = null
     }
 
-    private companion object {
-        const val TAG = "HarnessAssistantAct"
+    companion object {
+        /** Fill the screen instead of showing a bottom sheet (the in-app OpenClaw chat). */
+        const val EXTRA_FULL_SCREEN = "com.g150446.voiceclasp.extra.FULL_SCREEN"
+        private const val TAG = "HarnessAssistantAct"
     }
 }
 
 @Composable
 private fun AssistantSheet(
     state: AssistantUiState,
+    fullScreen: Boolean,
     onClose: () -> Unit,
     onOutside: () -> Unit,
     onDraftChange: (String) -> Unit,
     onToggleScreen: (Boolean) -> Unit,
     onSendText: () -> Unit,
     onMic: () -> Unit,
+    onLoadOlder: () -> Unit,
 ) {
     Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.35f))
-            .clickable { onOutside() },
+        modifier = if (fullScreen) {
+            Modifier.fillMaxSize()
+        } else {
+            Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.35f))
+                .clickable { onOutside() }
+        },
         contentAlignment = Alignment.BottomCenter,
     ) {
         Surface(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(max = 520.dp)
-                .clickable(enabled = false) { },
-            shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
+            modifier = if (fullScreen) {
+                Modifier.fillMaxSize()
+            } else {
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 520.dp)
+                    .clickable(enabled = false) { }
+            },
+            shape = if (fullScreen) RoundedCornerShape(0.dp) else RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
             color = MaterialTheme.colorScheme.surface,
             tonalElevation = 6.dp,
         ) {
-            Column(modifier = Modifier.padding(16.dp)) {
+            Column(
+                modifier = if (fullScreen) {
+                    Modifier.safeDrawingPadding().padding(16.dp)
+                } else {
+                    Modifier.padding(16.dp)
+                },
+            ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("Voice Clasp", fontSize = 16.sp)
+                        Text(if (fullScreen) "OpenClaw" else "Voice Clasp", fontSize = 16.sp)
                         val src = state.sourceLabel ?: state.sourcePackage
                         if (!src.isNullOrBlank()) {
                             Text(src, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -269,7 +304,7 @@ private fun AssistantSheet(
                     TextButton(onClick = onClose) { Text("閉じる") }
                 }
 
-                if (!state.locked) {
+                if (!state.locked && !fullScreen) {
                     FilterChip(
                         selected = state.useScreenContext,
                         onClick = {
@@ -288,19 +323,49 @@ private fun AssistantSheet(
 
                 Spacer(Modifier.height(8.dp))
                 val listState = rememberLazyListState()
-                LaunchedEffect(state.messages.size) {
-                    if (state.messages.isNotEmpty()) listState.scrollToItem(state.messages.lastIndex)
+                // A row above the messages while older OpenClaw history can still be paged in.
+                val hasOlderRow = state.loadingOlder || state.olderHistoryOffset != null
+                var scrolledToLatest by remember { mutableStateOf(false) }
+                // Keyed on the last message, not the count: windows added above must not jump the list.
+                LaunchedEffect(state.messages.lastOrNull()?.id) {
+                    if (state.messages.isNotEmpty()) {
+                        listState.scrollToItem(state.messages.lastIndex + if (hasOlderRow) 1 else 0)
+                        scrolledToLatest = true
+                    }
+                }
+                val currentOnLoadOlder by rememberUpdatedState(onLoadOlder)
+                // Restarted per window, so a window with no visible turns still pulls in the next one.
+                LaunchedEffect(listState, state.olderHistoryOffset) {
+                    snapshotFlow { scrolledToLatest && listState.firstVisibleItemIndex == 0 }
+                        .distinctUntilChanged()
+                        .collect { atTop -> if (atTop) currentOnLoadOlder() }
                 }
                 LazyColumn(
                     state = listState,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f, fill = false)
-                        .heightIn(min = 80.dp, max = 220.dp),
+                    modifier = if (fullScreen) {
+                        Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                    } else {
+                        Modifier
+                            .fillMaxWidth()
+                            .weight(1f, fill = false)
+                            .heightIn(min = 80.dp, max = 220.dp)
+                    },
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
+                    if (hasOlderRow) {
+                        item(key = "older-history") {
+                            Text(
+                                if (state.loadingOlder) "過去の会話を読み込み中…"
+                                else "上にスクロールで過去の会話を読み込みます",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
                     items(state.messages, key = { it.id }) { msg ->
-                        val label = if (msg.role == "user") "あなた" else "アシスタント"
+                        val label = if (msg.role == "user") "あなた" else if (fullScreen) "OpenClaw" else "アシスタント"
                         Text("$label: ${msg.content}", fontSize = 13.sp)
                     }
                 }

@@ -64,6 +64,15 @@ class OpenClawHarborSessionTest {
     }
 
     @Test
+    fun `chat defaults to the targeted agent's main session`() {
+        assertEquals("agent:main:main", mainSessionKey("openclaw/default"))
+        assertEquals("agent:main:main", mainSessionKey(""))
+        assertEquals("agent:harbor-voice:main", mainSessionKey("openclaw/harbor-voice"))
+        // Already scoped, so a fleet-wide target cannot re-prefix it.
+        assertEquals("agent:main:main", agentScopedSessionKey("openclaw/harbor-voice", mainSessionKey("openclaw/main")))
+    }
+
+    @Test
     fun `an already scoped key is left as the user chose it`() {
         assertEquals(
             "agent:main:existing",

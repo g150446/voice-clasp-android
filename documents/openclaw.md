@@ -54,9 +54,13 @@ pairing ではなく、OpenAI-compatible endpoint の bearer token fallback を�
 
 ## セッション
 
-初回に `voice-clasp:<UUID>` を1個生成して端末に永続化し、毎回
-`x-openclaw-session-key` で再利用する。Gateway は同じ会話を継続するため、各要求では
-最新の user turn だけを送る。
+会話は既定で agent の main セッション（`agent:<agent id>:main`。agent 名の無い target では
+`agent:main:main`）へ送る。ブラウザの Control UI が開くのと同じ会話で、`x-openclaw-session-key`
+で毎回指定する。Gateway は同じ会話を継続するため、各要求では最新の user turn だけを送る。
+agent を含めた形にしているのは、複数 agent の Gateway が素の `main` を拒否するため。
+
+別に、初回に `voice-clasp:<UUID>`（アプリ所有キー）を1個生成して端末に永続化する。
+Harbor 解釈の土台に使い、設定でチャット用に選ぶこともできる（下記）。
 
 Terminal Harbor の音声解釈は、ワークスペースごとに別セッションを使う:
 `<アプリ所有キー>:harbor:<workspaceId>`。土台は必ず**アプリ所有キー**で、設定で選んだ
@@ -83,13 +87,14 @@ BLE接続されたHarness Nodeの音声、アプリ内マイク音声、アプ�
 
 設定の **会話セッションを選択（ブラウザと共有）** で、Gateway 上の既存セッション
 （Control UI で開いているもの等）を選べる。選ぶとチャット・BLE音声・アプリ内入力の
-送信先とチャット画面の履歴取得が、そのセッションキーになる。「アプリ専用セッションに
-戻す」で上記の `voice-clasp:<UUID>` へ戻る。
+送信先とチャット画面の履歴取得が、そのセッションキーになる。「main に戻す（既定）」で
+main セッションへ、「アプリ専用セッションを使う」で `voice-clasp:<UUID>` へ切り替わる。
 `subagent:` / `cron:` / `acp:` 系と、`:harbor` / `:harbor:<workspaceId>` の解釈用セッションは
 一覧に出さない。
 
-チャット画面は開いたとき・画面に戻ったときに履歴を読み、Gateway の内容で表示を置き換える
-（応答生成中と、履歴が空のときは置き換えない）。端末ロック中は読まない。履歴は
+チャット画面は開いたとき・画面に戻ったときに最新の1ページ（Gateway が1回に返す 80KB 分）だけを読み、
+Gateway の内容で表示を置き換える（応答生成中と、履歴が空のときは置き換えない）。それより古い会話は、
+一覧を一番上までスクロールすると `nextOffset` から1ページずつ追加で読み込む。端末ロック中は読まない。履歴は
 `POST /tools/invoke` の `sessions_history`（一覧は `sessions_list`）で取得する。これらが
 Gateway の tool policy で許可されていない場合は 404 になるため、`tools.allow` に追加する。
 `sessions_history` は表示用に整形されないので、アプリ側で thinking / tool-call XML /
@@ -157,6 +162,10 @@ OpenClaw報告は音声専用。
 未設定なら有効化できない。OpenClaw は LLM ではないので、入っても応答モデル(LLM)の選択は変わらない。
 モードが ON の間は BLE 音声・アプリ内マイク・アプリ内テキストのすべてが OpenClaw へ送られ、
 OFF にすると選択中の LLM に戻る。
+
+ホームの **OpenClawチャット** ボタンは、操作モードを OpenClaw に切り替えてから、チャットを
+全画面で開く（Terminal Harbor の画面と同じ扱い）。開いたとき・戻ったときに上記セッションの
+履歴を読み込む。電源長押しのアシスタントは、今の操作モードのまま下部シートで開く。
 
 ### Node 音声（Harbor と同じ確認フロー）
 

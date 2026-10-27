@@ -1268,12 +1268,17 @@ fun HomeScreen(
 
         OutlinedButton(
             onClick = {
-                AssistantSessionController.beginAppSession(context)
-                context.startActivity(
-                    Intent(context, HarnessAssistantActivity::class.java).addFlags(
-                        Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP,
+                // The chat is OpenClaw's: switch the mode so it talks to the Gateway and loads history.
+                if (BleConnectionService.interactionMode.value == InteractionMode.OPENCLAW ||
+                    BleConnectionService.setInteractionMode(context, InteractionMode.OPENCLAW)
+                ) {
+                    AssistantSessionController.beginAppSession(context)
+                    context.startActivity(
+                        Intent(context, HarnessAssistantActivity::class.java)
+                            .putExtra(HarnessAssistantActivity.EXTRA_FULL_SCREEN, true)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
                     )
-                )
+                }
             },
             modifier = Modifier.fillMaxWidth(),
         ) {

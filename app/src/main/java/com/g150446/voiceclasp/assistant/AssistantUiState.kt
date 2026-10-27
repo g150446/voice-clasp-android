@@ -23,6 +23,9 @@ data class AssistantUiState(
     val screenAvailable: Boolean = false,
     val useScreenContext: Boolean = true,
     val messages: List<AssistantChatMessage> = emptyList(),
+    /** Where the next older OpenClaw history window starts; null once the start is reached. */
+    val olderHistoryOffset: Int? = null,
+    val loadingOlder: Boolean = false,
     val draftText: String = "",
     val phase: AssistantPhase = AssistantPhase.IDLE,
     val statusText: String = "",

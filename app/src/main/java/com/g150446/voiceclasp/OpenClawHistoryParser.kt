@@ -5,6 +5,16 @@ import org.json.JSONObject
 
 data class OpenClawHistoryMessage(val role: String, val text: String)
 
+/**
+ * One `sessions_history` window. [nextOffset] pages back to older messages (null at the start of
+ * the session); [total] is the session's message count, which grows as new turns land.
+ */
+data class OpenClawHistoryPage(
+    val messages: List<OpenClawHistoryMessage>,
+    val nextOffset: Int?,
+    val total: Int? = null,
+)
+
 data class OpenClawSessionInfo(
     val key: String,
     val title: String,
@@ -25,8 +35,18 @@ object OpenClawHistoryParser {
     private val CONTROL_TOKEN = Regex("<[|｜][^<>|｜]{1,64}[|｜]>")
     private val DIRECTIVE = Regex("\\[\\[[^\\]\\n]{1,64}]]")
 
-    fun parseHistory(body: String): List<OpenClawHistoryMessage> {
-        val messages = payload(body).optJSONArray("messages") ?: return emptyList()
+    fun parseHistory(body: String): List<OpenClawHistoryMessage> = parseHistoryPage(body).messages
+
+    fun parseHistoryPage(body: String): OpenClawHistoryPage {
+        val payload = payload(body)
+        val nextOffset = payload.optInt("nextOffset", -1)
+            .takeIf { it > 0 && payload.optBoolean("hasMore", false) }
+        val total = payload.optInt("totalMessages", -1).takeIf { it >= 0 }
+        return OpenClawHistoryPage(parseMessages(payload), nextOffset, total)
+    }
+
+    private fun parseMessages(payload: JSONObject): List<OpenClawHistoryMessage> {
+        val messages = payload.optJSONArray("messages") ?: return emptyList()
         return buildList {
             for (index in 0 until messages.length()) {
                 val message = messages.optJSONObject(index) ?: continue
